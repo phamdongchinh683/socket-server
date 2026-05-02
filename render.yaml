@@ -11,5 +11,5 @@ services:
         value: production
       - key: HOST
         value: 0.0.0.0
-      - key: SOCKET_SECRET_KEY
+      - key: JWT_SECRET
         sync: false

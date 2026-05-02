@@ -1,7 +1,6 @@
 const { Server } = require("socket.io");
 const { buildSocketAuthMiddleware } = require("../socket/auth");
 const { registerSocketHandlers } = require("../socket/handlers");
-const { createSocketStore } = require("../socket/store");
 
 function registerSocketServer(fastify) {
   const io = new Server(fastify.server, {
@@ -9,11 +8,9 @@ function registerSocketServer(fastify) {
       origin: "*",
     },
   });
-  const socketStore = createSocketStore();
 
-  fastify.decorate("socketStore", socketStore);
-  io.use(buildSocketAuthMiddleware(fastify.config.SOCKET_SECRET_KEY));
-  registerSocketHandlers(io, socketStore, fastify);
+  io.use(buildSocketAuthMiddleware(fastify.config.JWT_SECRET));
+  registerSocketHandlers(io, fastify);
 
   fastify.decorate("io", io);
 

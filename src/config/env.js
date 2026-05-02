@@ -1,10 +1,10 @@
 const envSchema = {
   type: "object",
-  required: ["PORT", "HOST", "SOCKET_SECRET_KEY"],
+  required: ["PORT", "HOST", "JWT_SECRET"],
   properties: {
-    PORT: { type: "number", default: 3000 },
+    PORT: { type: "number", default: 4444 },
     HOST: { type: "string", default: "0.0.0.0" },
-    SOCKET_SECRET_KEY: { type: "string", minLength: 1 },
+    JWT_SECRET: { type: "string", minLength: 1 },
   },
 };
 

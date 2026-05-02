@@ -23,7 +23,7 @@ Render deploys from your git repository, so push this project first.
 
 Set these in Render -> Environment:
 
-- `SOCKET_SECRET_KEY` = your secret key
+- `JWT_SECRET` = same secret your API uses to sign user JWTs (HS256, etc.)
 - `HOST` = `0.0.0.0`
 - `NODE_ENV` = `production`
 
@@ -34,4 +34,4 @@ Render automatically provides `PORT`, and the server already supports it.
 - Health check: `https://<your-render-domain>/health`
 - Socket.IO URL in client/Postman: `https://<your-render-domain>`
 
-For auth, send `secretKey` in Socket.IO handshake auth/header/query.
+For auth, send a valid JWT: `Authorization: Bearer <token>`, or `auth.token`, or query `token`. The token must include `sub` (or `userId` / `id`) for the account id.
