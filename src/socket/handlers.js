@@ -1,5 +1,6 @@
 const { extractUserId } = require("./auth");
-const { normalizeUserIdList } = require("../utils");
+const { readUnreadCount } = require("../service/index.js");
+
 
 function registerSocketHandlers(io, fastify) {
   io.on("connection", (socket) => {
@@ -10,31 +11,31 @@ function registerSocketHandlers(io, fastify) {
     fastify.log.info({ socketId: socket.id, userId }, "Connected");
 
 
-    socket.on("chat:new", (payload = {}) => { 
-      const { body, boxId, createdAt, userIds, title } = payload;
-      const message = {
+    socket.on("chat:new", (payload = {}) => {
+      const data = {
         senderId: socket.data.userId,
-        body,
-        boxId,
-        createdAt,
-        title
+        body: payload.body,
+        boxId: payload.boxId,
+        receiverId: payload.receiverId,
+        createdAt: payload.createdAt,
+        title: payload.title
       };
 
-      const toUserIds = normalizeUserIdList(userIds);
-      socket.to(toUserIds).emit('chat:new', message)
-
+      socket.to(String(payload.receiverId)).emit("chat:new", data);
     });
 
     socket.on("chat:message:send", (payload = {}) => {
-      const { body, boxId, createdAt } = payload;
       const message = {
         senderId: socket.data.userId,
-        body,
-        boxId,
-        createdAt,
-    }
+        body: payload.body,
+        boxId: payload.boxId,
+        createdAt: payload.createdAt,
+        receiverId: payload.receiverId
+      }
+      
 
-      socket.to(boxId).emit('message:new', message)
+      socket.to(String(payload.boxId)).emit('message:new', message)
+      socket.to(String(payload.receiverId)).emit("chat:unread:count", { unreadReceiverCount: payload.unreadReceiverCount, unreadSenderCount: payload.unreadSenderCount, boxId: payload.boxId, lastMessage: payload.body });
     });
 
     socket.on("chat:join", (payload = {}) => {
@@ -42,20 +43,31 @@ function registerSocketHandlers(io, fastify) {
       if (!boxId) {
         return;
       }
-      
-      if (!socket.rooms.has(boxId)) {
-        socket.join(boxId);
+
+      if (!socket.rooms.has(String(boxId))) {
+        socket.join(String(boxId));
       }
 
       socket.emit("chat:joined", { boxId });
 
     });
 
+    socket.on("chat:read", async (payload = {}) => {
+      const result = await readUnreadCount({
+        baseUrl: fastify.config.API_URL,
+        boxId: payload.boxId,
+        token: socket.data.bearerToken,
+      });
+
+      socket.emit("chat:unread:count", { unreadReceiverCount: result.unreadReceiverCount, unreadSenderCount: result.unreadSenderCount, boxId: result.boxId });
+
+    });
+
     socket.on("chat:leave", (payload = {}) => {
       const boxId = payload.boxId;
-      socket.leave(boxId);
+      socket.leave(String(boxId));
 
-      socket.to(boxId).emit("user:left", {
+      socket.to(String(boxId)).emit("user:left", {
         userId: socket.data.userId,
       });
     });

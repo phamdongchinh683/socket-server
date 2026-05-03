@@ -24,6 +24,7 @@ Render deploys from your git repository, so push this project first.
 Set these in Render -> Environment:
 
 - `JWT_SECRET` = same secret your API uses to sign user JWTs (HS256, etc.)
+- `API_URL` = base URL of your HTTP API (**no trailing slash**), e.g. `https://api.example.com` — used for `readUnreadCount` and similar calls.
 - `HOST` = `0.0.0.0`
 - `NODE_ENV` = `production`
 

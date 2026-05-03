@@ -54,6 +54,7 @@ function buildSocketAuthMiddleware(jwtSecret) {
 
       socket.data.userId = String(uid);
       socket.data.jwtPayload = payload;
+      socket.data.bearerToken = token;
       return next();
     } catch {
       return next(new Error("Unauthorized: invalid or expired JWT"));
