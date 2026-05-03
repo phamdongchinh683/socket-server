@@ -10,7 +10,7 @@ function registerSocketHandlers(io, fastify) {
     fastify.log.info({ socketId: socket.id, userId }, "Connected");
 
 
-    socket.on("chat:new", (payload = {}) => {
+    socket.on("chat:new", (payload = {}) => { 
       const { body, boxId, createdAt, userIds, title } = payload;
       const message = {
         senderId: socket.data.userId,
@@ -25,11 +25,8 @@ function registerSocketHandlers(io, fastify) {
 
     });
 
-    socket.on("chat:message:send", async (payload = {}) => {
-
+    socket.on("chat:message:send", (payload = {}) => {
       const { body, boxId, createdAt } = payload;
-      const roomSockets = await io.in(boxId).fetchSockets();
-      fastify.log.info({ boxId, members: roomSockets.length }, "Room members");
       const message = {
         senderId: socket.data.userId,
         body,
@@ -38,7 +35,6 @@ function registerSocketHandlers(io, fastify) {
     }
 
       socket.to(boxId).emit('message:new', message)
-      io.to(boxId).emit('chat:message:update', message)
     });
 
     socket.on("chat:join", (payload = {}) => {
