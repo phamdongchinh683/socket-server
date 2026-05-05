@@ -9,7 +9,12 @@ function registerSocketServer(fastify) {
     },
   });
 
-  io.use(buildSocketAuthMiddleware(fastify.config.JWT_SECRET));
+  io.use(
+    buildSocketAuthMiddleware({
+      jwtSecret: fastify.config.JWT_SECRET,
+      internalSocketToken: fastify.config.INTERNAL_SOCKET_TOKEN,
+    })
+  );
   registerSocketHandlers(io, fastify);
 
   fastify.decorate("io", io);

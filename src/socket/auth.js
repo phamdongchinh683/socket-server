@@ -31,33 +31,37 @@ function extractUserId(socket) {
   return socket.id;
 }
 
-function buildSocketAuthMiddleware(jwtSecret) {
+function buildSocketAuthMiddleware({ jwtSecret, internalSocketToken }) {
   return (socket, next) => {
-    const secret =
-      typeof jwtSecret === "string" ? jwtSecret.trim() : "";
-    if (secret === "") {
-      return next(new Error("Unauthorized: JWT_SECRET not configured"));
+    const isInternal = socket.handshake.auth?.type === "internal"
+    if (isInternal) {
+      const internalToken = socket.handshake.auth?.token
+
+      if (internalToken !== internalSocketToken) {
+        return next(new Error("Unauthorized: invalid internal token"))
+      }
+      return next()
     }
 
-    const token = extractJwtToken(socket);
+    const token = extractJwtToken(socket)
     if (!token) {
-      return next(new Error("Unauthorized: missing JWT"));
+      return next(new Error("Unauthorized: missing JWT"))
     }
 
     try {
-      const payload = jwt.verify(token, secret);
+      const payload = jwt.verify(token, jwtSecret);
       const uid = payload.sub ?? payload.userId ?? payload.id;
 
       if (uid == null || String(uid).trim() === "") {
-        return next(new Error("Unauthorized: JWT missing subject (sub / userId / id)"));
+        return next(new Error("Unauthorized: JWT missing subject"))
       }
 
-      socket.data.userId = String(uid);
-      socket.data.jwtPayload = payload;
-      socket.data.bearerToken = token;
-      return next();
+      socket.data.userId = String(uid)
+      socket.data.jwtPayload = payload
+      socket.data.bearerToken = token
+      return next()
     } catch {
-      return next(new Error("Unauthorized: invalid or expired JWT"));
+      return next(new Error("Unauthorized: invalid or expired JWT"))
     }
   };
 }

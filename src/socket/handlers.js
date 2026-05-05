@@ -11,15 +11,18 @@ const ONLINE_USERS_EVENT = "users:online";
 
 function registerSocketHandlers(io, fastify) {
   io.on("connection", (socket) => {
-    const userId = toValidUserId(extractUserId(socket));
-    if (userId === "") {
-      fastify.log.warn(
-        { socketId: socket.id },
-        "Rejecting socket connection because userId is invalid"
-      );
-      socket.disconnect(true);
+    const isInternal = socket.handshake.auth?.type === "internal";
+    if (isInternal) {
+      fastify.log.info({ socketId: socket.id }, "Internal API connected");
+      socket.onAny((event, payload) => {
+        socket.to(String(payload.targetId)).emit(event, payload.data ?? {});
+      });
+
       return;
     }
+
+
+    const userId = toValidUserId(extractUserId(socket));
 
     socket.data.userId = userId;
     socket.join(userId);
@@ -41,33 +44,6 @@ function registerSocketHandlers(io, fastify) {
       }
 
       socket.emit(ONLINE_USERS_EVENT, response);
-    });
-
-    socket.on("chat:new", (payload = {}) => {
-      const data = {
-        senderId: socket.data.userId,
-        body: payload.body,
-        boxId: payload.boxId,
-        senderName: payload.senderName,
-        receiverId: payload.receiverId,
-        createdAt: payload.createdAt,
-      };
-
-      socket.to(String(payload.receiverId)).emit("chat:new", data);
-    });
-
-    socket.on("chat:message:send", (payload = {}) => {
-      const message = {
-        senderId: socket.data.userId,
-        body: payload.body,
-        boxId: payload.boxId,
-        createdAt: payload.createdAt,
-        receiverId: payload.receiverId
-      }
-      
-
-      socket.to(String(payload.boxId)).emit('message:new', message)
-      socket.to(String(payload.receiverId)).emit("chat:unread:count", { unreadReceiverCount: payload.unreadReceiverCount, unreadSenderCount: payload.unreadSenderCount, boxId: payload.boxId, lastMessage: payload.body });
     });
 
     socket.on("chat:join", (payload = {}) => {
@@ -95,6 +71,22 @@ function registerSocketHandlers(io, fastify) {
 
     });
 
+    socket.on("chat:typing:start", (payload = {}) => {
+      if (!payload.boxId) return;
+      socket.to(String(payload.boxId)).emit("chat:typing:start", {
+        userId: socket.data.userId,
+        boxId: payload.boxId,
+      });
+    });
+    
+    socket.on("chat:typing:stop", (payload = {}) => {
+      if (!payload.boxId) return;
+      socket.to(String(payload.boxId)).emit("chat:typing:stop", {
+        userId: socket.data.userId,
+        boxId: payload.boxId,
+      });
+    });
+
     socket.on("chat:leave", (payload = {}) => {
       const boxId = payload.boxId;
       socket.leave(String(boxId));
@@ -111,7 +103,7 @@ function registerSocketHandlers(io, fastify) {
       if (onlineSocketsCount === 0) {
         socket.broadcast.emit("user:offline", { userId });
       }
-      
+
     });
   });
 }
