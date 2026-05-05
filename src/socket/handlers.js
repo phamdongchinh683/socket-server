@@ -1,25 +1,47 @@
 const { extractUserId } = require("./auth");
 const { readUnreadCount } = require("../service/index.js");
-
-const userOnlines = new Map();
+const {
+  toValidUserId,
+  addOnlineSocket,
+  removeOnlineSocket,
+  getOnlineUserIds,
+} = require("./online-store");
+const GET_ONLINE_USERS_EVENT = "users:online:get";
+const ONLINE_USERS_EVENT = "users:online";
 
 function registerSocketHandlers(io, fastify) {
   io.on("connection", (socket) => {
-    const userId = extractUserId(socket);
+    const userId = toValidUserId(extractUserId(socket));
+    if (userId === "") {
+      fastify.log.warn(
+        { socketId: socket.id },
+        "Rejecting socket connection because userId is invalid"
+      );
+      socket.disconnect(true);
+      return;
+    }
+
     socket.data.userId = userId;
     socket.join(userId);
 
-    if (!userOnlines.has(userId)) {
-      userOnlines.set(userId, new Set());
-    }
-    userOnlines.get(userId).add(socket.id);
-
-    if (userOnlines.get(userId).size === 1) {
+    const onlineSocketsCount = addOnlineSocket(userId, socket.id);
+    if (onlineSocketsCount === 1) {
       socket.broadcast.emit("user:online", { userId });
     }
 
-    socket.emit("users:online", { userIds: [...userOnlines.keys()] });
+    socket.emit(ONLINE_USERS_EVENT, { userIds: getOnlineUserIds() });
     fastify.log.info({ socketId: socket.id, userId }, "Connected");
+
+    socket.on(GET_ONLINE_USERS_EVENT, (payload = {}, callback) => {
+      const response = { userIds: getOnlineUserIds() };
+
+      if (typeof callback === "function") {
+        callback(response);
+        return;
+      }
+
+      socket.emit(ONLINE_USERS_EVENT, response);
+    });
 
     socket.on("chat:new", (payload = {}) => {
       const data = {
@@ -85,15 +107,9 @@ function registerSocketHandlers(io, fastify) {
     socket.on("disconnect", (reason) => {
       fastify.log.info({ socketId: socket.id, userId, reason }, "Disconnected");
 
-
-      const sockets = userOnlines.get(userId);
-      if (sockets) {
-        sockets.delete(socket.id);
-
-        if (sockets.size === 0) {
-          userOnlines.delete(userId);
-          socket.broadcast.emit("user:offline", { userId });
-        }
+      const onlineSocketsCount = removeOnlineSocket(userId, socket.id);
+      if (onlineSocketsCount === 0) {
+        socket.broadcast.emit("user:offline", { userId });
       }
       
     });
