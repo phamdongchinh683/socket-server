@@ -1,6 +1,7 @@
 const { extractUserId } = require("./auth");
 const { readUnreadCount } = require("../service/index.js");
 
+const userOnlines = new Map();
 
 function registerSocketHandlers(io, fastify) {
   io.on("connection", (socket) => {
@@ -8,17 +9,26 @@ function registerSocketHandlers(io, fastify) {
     socket.data.userId = userId;
     socket.join(userId);
 
-    fastify.log.info({ socketId: socket.id, userId }, "Connected");
+    if (!userOnlines.has(userId)) {
+      userOnlines.set(userId, new Set());
+    }
+    userOnlines.get(userId).add(socket.id);
 
+    if (userOnlines.get(userId).size === 1) {
+      socket.broadcast.emit("user:online", { userId });
+    }
+
+    socket.emit("users:online", { userIds: [...userOnlines.keys()] });
+    fastify.log.info({ socketId: socket.id, userId }, "Connected");
 
     socket.on("chat:new", (payload = {}) => {
       const data = {
         senderId: socket.data.userId,
         body: payload.body,
         boxId: payload.boxId,
+        senderName: payload.senderName,
         receiverId: payload.receiverId,
         createdAt: payload.createdAt,
-        title: payload.title
       };
 
       socket.to(String(payload.receiverId)).emit("chat:new", data);
@@ -74,6 +84,18 @@ function registerSocketHandlers(io, fastify) {
 
     socket.on("disconnect", (reason) => {
       fastify.log.info({ socketId: socket.id, userId, reason }, "Disconnected");
+
+
+      const sockets = userOnlines.get(userId);
+      if (sockets) {
+        sockets.delete(socket.id);
+
+        if (sockets.size === 0) {
+          userOnlines.delete(userId);
+          socket.broadcast.emit("user:offline", { userId });
+        }
+      }
+      
     });
   });
 }
