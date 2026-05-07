@@ -8,6 +8,8 @@ const {
 } = require("./online-store");
 const GET_ONLINE_USERS_EVENT = "users:online:get";
 const ONLINE_USERS_EVENT = "users:online";
+const ALLOWED_CALL_TYPES = new Set(["voice", "video"]);
+const activeCallsByBoxId = new Map();
 
 function registerSocketHandlers(io, fastify) {
   io.on("connection", (socket) => {
@@ -57,6 +59,10 @@ function registerSocketHandlers(io, fastify) {
       }
 
       socket.emit("chat:joined", { boxId });
+      const activeCall = activeCallsByBoxId.get(String(boxId));
+      if (activeCall) {
+        socket.emit("chat:call:active", activeCall);
+      }
 
     });
 
@@ -86,6 +92,72 @@ function registerSocketHandlers(io, fastify) {
         boxId: payload.boxId,
       });
     });
+
+    socket.on("chat:call:start", (payload = {}) => {
+      if (!payload.boxId) return;
+      const existingCall = activeCallsByBoxId.get(String(payload.boxId));
+      if (existingCall) {
+        socket.emit("chat:call:active", existingCall);
+        return;
+      }
+
+      const callType = ALLOWED_CALL_TYPES.has(payload.callType) ? payload.callType : "voice";
+      const callSession = {
+        userId: socket.data.userId,
+        boxId: String(payload.boxId),
+        callType,
+        startedAt: Date.now(),
+      };
+      activeCallsByBoxId.set(String(payload.boxId), callSession);
+
+      socket.to(String(payload.boxId)).emit("chat:call:start", callSession);
+    });
+
+    socket.on("chat:call:offer", (payload = {}) => {
+      if (!payload.boxId || !payload.offer) return;
+      socket.to(String(payload.boxId)).emit("chat:call:offer", {
+        userId: socket.data.userId,
+        boxId: payload.boxId,
+        offer: payload.offer,
+      });
+    });
+
+    socket.on("chat:call:answer", (payload = {}) => {
+      if (!payload.boxId || !payload.answer) return;
+      socket.to(String(payload.boxId)).emit("chat:call:answer", {
+        userId: socket.data.userId,
+        boxId: payload.boxId,
+        answer: payload.answer,
+      });
+    });
+
+    socket.on("chat:call:ice-candidate", (payload = {}) => {
+      if (!payload.boxId || !payload.candidate) return;
+      socket.to(String(payload.boxId)).emit("chat:call:ice-candidate", {
+        userId: socket.data.userId,
+        boxId: payload.boxId,
+        candidate: payload.candidate,
+      });
+    });
+
+    socket.on("chat:call:reject", (payload = {}) => {
+      if (!payload.boxId) return;
+      activeCallsByBoxId.delete(String(payload.boxId));
+      socket.to(String(payload.boxId)).emit("chat:call:reject", {
+        userId: socket.data.userId,
+        boxId: String(payload.boxId),
+      });
+    });
+
+    socket.on("chat:call:end", (payload = {}) => {
+      if (!payload.boxId) return;
+      activeCallsByBoxId.delete(String(payload.boxId));
+      socket.to(String(payload.boxId)).emit("chat:call:end", {
+        userId: socket.data.userId,
+        boxId: String(payload.boxId),
+      });
+    });
+
 
     socket.on("chat:leave", (payload = {}) => {
       const boxId = payload.boxId;

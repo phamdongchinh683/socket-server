@@ -1,23 +1,35 @@
 const jwt = require("jsonwebtoken");
 
+function normalizeToken(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  const raw = value.trim();
+  if (!raw) {
+    return "";
+  }
+
+  return raw.replace(/^Bearer\s+/i, "").trim();
+}
+
 function extractJwtToken(socket) {
   const fromAuth = socket.handshake.auth?.token;
   if (typeof fromAuth === "string" && fromAuth.trim()) {
-    const raw = fromAuth.trim();
-    return raw.startsWith("Bearer ") ? raw.slice(7) : raw;
+    return normalizeToken(fromAuth);
   }
 
   const bearer =
     socket.handshake.headers.authorization ||
     socket.handshake.headers.Authorization;
 
-  if (typeof bearer === "string" && bearer.startsWith("Bearer ")) {
-    return bearer.slice(7).trim();
+  if (typeof bearer === "string" && bearer.trim()) {
+    return normalizeToken(bearer);
   }
 
   const fromQuery = socket.handshake.query?.token;
   if (typeof fromQuery === "string" && fromQuery.trim()) {
-    return fromQuery.trim();
+    return normalizeToken(fromQuery);
   }
 
   return "";
