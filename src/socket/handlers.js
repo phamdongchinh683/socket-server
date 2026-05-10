@@ -168,26 +168,6 @@ function registerSocketHandlers(io, fastify) {
       });
     });
 
-    socket.on("trip:join", (payload = {}) => {
-      const id = payload.id;
-
-      if (!socket.rooms.has(String(id))) {
-        socket.join(String(id));
-      }
-    });
-
-    socket.on("trip:seat:select", (payload = {}) => {
-      const id = payload.id;
-      const seatId = payload.seatId;
-
-      socket.to(String(id)).emit("trip:seat:selected", {
-        id: String(id),
-        seatId: String(seatId),
-      });
-    });
-
-
-
     socket.on("disconnect", (reason) => {
       fastify.log.info({ socketId: socket.id, userId, reason }, "Disconnected");
 
