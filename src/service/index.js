@@ -37,7 +37,9 @@ async function readUnreadCount({ baseUrl, boxId, token }) {
       raw && typeof raw === "object"
         ? raw.message || raw.error
         : null;
-    throw new Error(msg || `HTTP ${res.status}`);
+    const err = new Error(msg || `HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
   }
 
   if (raw == null || typeof raw !== "object") {
