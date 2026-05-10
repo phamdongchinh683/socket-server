@@ -169,19 +169,19 @@ function registerSocketHandlers(io, fastify) {
     });
 
     socket.on("trip:join", (payload = {}) => {
-      const tripId = payload.tripId;
+      const id = payload.id;
 
-      if (!socket.rooms.has(String(tripId))) {
-        socket.join(String(tripId));
+      if (!socket.rooms.has(String(id))) {
+        socket.join(String(id));
       }
     });
 
     socket.on("trip:seat:select", (payload = {}) => {
-      const tripId = payload.tripId;
+      const id = payload.id;
       const seatId = payload.seatId;
 
-      socket.to(String(tripId)).emit("trip:seat:selected", {
-        tripId: String(tripId),
+      socket.to(String(id)).emit("trip:seat:selected", {
+        id: String(id),
         seatId: String(seatId),
       });
     });
