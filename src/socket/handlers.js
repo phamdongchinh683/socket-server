@@ -84,7 +84,7 @@ function registerSocketHandlers(io, fastify) {
         boxId: payload.boxId,
       });
     });
-    
+
     socket.on("chat:typing:stop", (payload = {}) => {
       if (!payload.boxId) return;
       socket.to(String(payload.boxId)).emit("chat:typing:stop", {
@@ -167,6 +167,26 @@ function registerSocketHandlers(io, fastify) {
         userId: socket.data.userId,
       });
     });
+
+    socket.on("trip:join", (payload = {}) => {
+      const tripId = payload.tripId;
+
+      if (!socket.rooms.has(String(tripId))) {
+        socket.join(String(tripId));
+      }
+    });
+
+    socket.on("trip:seat:select", (payload = {}) => {
+      const tripId = payload.tripId;
+      const seatId = payload.seatId;
+
+      socket.to(String(tripId)).emit("trip:seat:selected", {
+        tripId: String(tripId),
+        seatId: String(seatId),
+      });
+    });
+
+
 
     socket.on("disconnect", (reason) => {
       fastify.log.info({ socketId: socket.id, userId, reason }, "Disconnected");
