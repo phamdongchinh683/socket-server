@@ -1,16 +1,20 @@
 const { getOnlineUsersCount } = require("../socket/online-store");
 
-async function healthRoutes(fastify) {
-  fastify.get("/health", async () => {
-    const clientsCount = fastify.io ? fastify.io.engine.clientsCount : 0;
-    const onlineUsers = getOnlineUsersCount();
-
-    return {
-      message: "OK",
-      clients: clientsCount,
-      onlineUsers,
-    };
+function sendHealthResponse(res, io) {
+  const clientsCount = io ? io.engine.clientsCount : 0;
+  const body = JSON.stringify({
+    message: "OK",
+    clients: clientsCount,
+    onlineUsers: getOnlineUsersCount(),
   });
+
+  res.writeHead(200, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": Buffer.byteLength(body),
+  });
+  res.end(body);
 }
 
-module.exports = healthRoutes;
+module.exports = {
+  sendHealthResponse,
+};

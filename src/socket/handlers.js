@@ -11,11 +11,11 @@ const ONLINE_USERS_EVENT = "users:online";
 const ALLOWED_CALL_TYPES = new Set(["voice", "video"]);
 const activeCallsByBoxId = new Map();
 
-function registerSocketHandlers(io, fastify) {
+function registerSocketHandlers(io, app) {
   io.on("connection", (socket) => {
     const isInternal = socket.handshake.auth?.type === "internal";
     if (isInternal) {
-      fastify.log.info({ socketId: socket.id }, "Internal API connected");
+      app.log.info({ socketId: socket.id }, "Internal API connected");
       socket.onAny((event, payload) => {
         socket.to(String(payload.targetId)).emit(event, payload.data ?? {});
       });
@@ -35,7 +35,7 @@ function registerSocketHandlers(io, fastify) {
     }
 
     socket.emit(ONLINE_USERS_EVENT, { userIds: getOnlineUserIds() });
-    fastify.log.info({ socketId: socket.id, userId }, "Connected");
+    app.log.info({ socketId: socket.id, userId }, "Connected");
 
     socket.on(GET_ONLINE_USERS_EVENT, (payload = {}, callback) => {
       const response = { userIds: getOnlineUserIds() };
@@ -68,7 +68,7 @@ function registerSocketHandlers(io, fastify) {
 
     socket.on("chat:read", async (payload = {}) => {
       const result = await readUnreadCount({
-        baseUrl: fastify.config.API_URL,
+        baseUrl: app.config.API_URL,
         boxId: payload.boxId,
         token: socket.data.bearerToken,
       });
@@ -169,7 +169,7 @@ function registerSocketHandlers(io, fastify) {
     });
 
     socket.on("disconnect", (reason) => {
-      fastify.log.info({ socketId: socket.id, userId, reason }, "Disconnected");
+      app.log.info({ socketId: socket.id, userId, reason }, "Disconnected");
 
       const onlineSocketsCount = removeOnlineSocket(userId, socket.id);
       if (onlineSocketsCount === 0) {

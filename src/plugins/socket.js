@@ -11,31 +11,26 @@ function parseSocketTransports(value) {
   return transports.length > 0 ? transports : ["websocket"];
 }
 
-function registerSocketServer(fastify) {
-  const io = new Server(fastify.server, {
+function registerSocketServer(httpServer, app) {
+  const io = new Server(httpServer, {
     cors: {
       origin: "*",
     },
-    transports: parseSocketTransports(fastify.config.SOCKET_TRANSPORTS),
-    perMessageDeflate: fastify.config.SOCKET_PER_MESSAGE_DEFLATE,
-    serveClient: fastify.config.SOCKET_SERVE_CLIENT,
+    transports: parseSocketTransports(app.config.SOCKET_TRANSPORTS),
+    perMessageDeflate: app.config.SOCKET_PER_MESSAGE_DEFLATE,
+    serveClient: app.config.SOCKET_SERVE_CLIENT,
     allowEIO3: false,
   });
 
   io.use(
     buildSocketAuthMiddleware({
-      jwtSecret: fastify.config.JWT_SECRET,
-      internalSocketToken: fastify.config.INTERNAL_SOCKET_TOKEN,
+      jwtSecret: app.config.JWT_SECRET,
+      internalSocketToken: app.config.INTERNAL_SOCKET_TOKEN,
     })
   );
-  registerSocketHandlers(io, fastify);
+  registerSocketHandlers(io, app);
 
-  fastify.decorate("io", io);
-
-  fastify.addHook("onClose", (instance, done) => {
-    instance.io.close();
-    done();
-  });
+  return io;
 }
 
 module.exports = {

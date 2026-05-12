@@ -1,25 +1,41 @@
-const Fastify = require("fastify");
-const fastifyEnv = require("@fastify/env");
-const { envOptions } = require("./config/env");
+const http = require("http");
+const { loadConfig } = require("./config/env");
+const { createLogger } = require("./logger");
 const { registerSocketServer } = require("./plugins/socket");
-const healthRoutes = require("./routes/health");
+const { sendHealthResponse } = require("./routes/health");
 
-async function buildServer() {
-  const fastify = Fastify({
-    logger: {
-      level: process.env.LOG_LEVEL || "error",
-    },
-    disableRequestLogging: true,
-    requestIdLogLabel: false,
-    requestIdHeader: false,
+function buildServer() {
+  const config = loadConfig();
+  const log = createLogger(config.LOG_LEVEL);
+
+  const httpServer = http.createServer((req, res) => {
+    const method = req.method || "GET";
+    const url = req.url?.split("?")[0] || "/";
+
+    if (method === "GET" && url === "/health") {
+      sendHealthResponse(res, httpServer.io);
+      return;
+    }
+
+    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("Not Found");
   });
 
-  await fastify.register(fastifyEnv, envOptions);
-  await fastify.register(healthRoutes);
+  const app = { config, log };
+  const io = registerSocketServer(httpServer, app);
+  httpServer.io = io;
 
-  registerSocketServer(fastify);
+  async function close() {
+    await new Promise((resolve) => io.close(resolve));
+  }
 
-  return fastify;
+  return {
+    httpServer,
+    io,
+    config,
+    log,
+    close,
+  };
 }
 
 module.exports = {

@@ -15,3 +15,5 @@ services:
         sync: false
       - key: API_URL
         sync: false
+      - key: INTERNAL_SOCKET_TOKEN
+        sync: false
