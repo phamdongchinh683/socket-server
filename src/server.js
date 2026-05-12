@@ -6,7 +6,12 @@ const healthRoutes = require("./routes/health");
 
 async function buildServer() {
   const fastify = Fastify({
-    logger: true,
+    logger: {
+      level: process.env.LOG_LEVEL || "error",
+    },
+    disableRequestLogging: true,
+    requestIdLogLabel: false,
+    requestIdHeader: false,
   });
 
   await fastify.register(fastifyEnv, envOptions);

@@ -13,6 +13,10 @@ const envSchema = {
       type: "string",
       minLength: 1,
     },
+    LOG_LEVEL: { type: "string", default: "error" },
+    SOCKET_TRANSPORTS: { type: "string", default: "websocket" },
+    SOCKET_PER_MESSAGE_DEFLATE: { type: "boolean", default: false },
+    SOCKET_SERVE_CLIENT: { type: "boolean", default: false },
   },
 };
 
