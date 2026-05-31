@@ -12,8 +12,8 @@ const ONLINE_USERS_EVENT = "users:online";
 const ALLOWED_CALL_TYPES = new Set(["voice", "video"]);
 const activeCallsByBoxId = new Map();
 
-const typingTimers = new Map();   // `typing:${boxId}` -> timer
-const iceRateLimit = new Map();   // boxId -> lastSent timestamp
+const typingTimers = new Map();
+const iceRateLimit = new Map();
 
 function scheduleTypingBroadcast(socket, boxId) {
     const key = `typing:${boxId}`;
