@@ -1,5 +1,6 @@
 const { createClient } = require("redis");
 const { Redis: UpstashRedis } = require("@upstash/redis");
+const { createAdapter } = require("@socket.io/redis-adapter");
 
 let rawClient = null;
 let normalizedClient = null;
@@ -84,12 +85,10 @@ function wrapUpstash(redis) {
             return redis.bitcount(key);
         },
         async eval(script, options) {
-            // Upstash uses different eval signature
             const { keys = [], arguments: args = [] } = options || {};
             return redis.eval(script, keys, args);
         },
         async info(section) {
-            // Upstash support for INFO is limited / may not work on all plans
             try {
                 return redis.info(section);
             } catch {
@@ -97,11 +96,9 @@ function wrapUpstash(redis) {
             }
         },
         async quit() {
-            // Upstash is HTTP - no persistent connection to close
             return;
         },
         get isOpen() {
-            // Always "open" conceptually for Upstash REST client
             return true;
         },
     };
@@ -131,33 +128,12 @@ function buildNodeRedisOptions(config) {
             keepAlive: 30000,
             noDelay: true,
         },
-        // Better defaults for presence system
         commandsQueueMaxLength: 1000,
     };
-
-    if (config.REDIS_URL) {
-        options.url = config.REDIS_URL;
-        return options;
-    }
-
-    options.socket.host = config.REDIS_HOST;
-    options.socket.port = config.REDIS_PORT;
-
-    if (config.REDIS_PASSWORD) {
-        options.password = config.REDIS_PASSWORD;
-    }
-
-    if (config.REDIS_DB != null) {
-        options.database = config.REDIS_DB;
-    }
 
     return options;
 }
 
-/**
- * Get or create the (raw) Redis client.
- * For most use cases, prefer connectRedis() which returns a normalized adapter.
- */
 function getRedisClient(config) {
     if (rawClient) {
         return rawClient;
@@ -169,7 +145,6 @@ function getRedisClient(config) {
         return rawClient;
     }
 
-    // Standard node-redis
     isUpstash = false;
     const options = buildNodeRedisOptions(config);
     rawClient = createClient(options);
@@ -182,9 +157,7 @@ function getRedisClient(config) {
         }
     });
 
-    rawClient.on("connect", () => {
-        console.log("[redis] Connected");
-    });
+    rawClient.on("connect", () => {});
 
     return rawClient;
 }
@@ -201,7 +174,7 @@ async function connectRedis(config) {
         const upstash = buildUpstashClient(config);
         rawClient = upstash;
         normalizedClient = wrapUpstash(upstash);
-        console.log("[redis] Using Upstash Redis (REST)");
+
         return normalizedClient;
     }
 
@@ -221,9 +194,6 @@ async function connectRedis(config) {
     return normalizedClient;
 }
 
-/**
- * Close the Redis connection (no-op for Upstash).
- */
 async function closeRedis() {
     if (normalizedClient) {
         try {
@@ -244,8 +214,50 @@ async function closeRedis() {
     }
 }
 
+async function createAdapterPubSubClients(config) {
+    const adapterUrl = config.SOCKET_REDIS_URL
+
+    if (adapterUrl) {
+        const pubClient = createClient({ url: adapterUrl });
+        const subClient = pubClient.duplicate();
+
+        pubClient.on("error", (err) => {
+            console.error("[redis:adapter:pub] error:", err.message || err);
+        });
+        subClient.on("error", (err) => {
+            console.error("[redis:adapter:sub] error:", err.message || err);
+        });
+
+        await pubClient.connect();
+        await subClient.connect();
+
+        return { pubClient, subClient };
+    }
+
+    if (isUpstashConfig(config)) {
+        return null;
+    }
+
+    const options = buildNodeRedisOptions(config);
+    const pubClient = createClient(options);
+    const subClient = pubClient.duplicate();
+
+    pubClient.on("error", (err) => {
+        console.error("[redis:adapter:pub] error:", err.message || err);
+    });
+    subClient.on("error", (err) => {
+        console.error("[redis:adapter:sub] error:", err.message || err);
+    });
+
+    await pubClient.connect();
+    await subClient.connect();
+
+    return { pubClient, subClient };
+}
+
 module.exports = {
     getRedisClient,
     connectRedis,
     closeRedis,
+    createAdapterPubSubClients,
 };

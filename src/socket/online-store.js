@@ -8,7 +8,6 @@ const COUNTS_KEY = "online:counts";
 const MAP_KEY = "online:map";
 const COUNTER_KEY = "online:counter";
 
-// Simple in-memory cache (especially useful for Upstash REST to reduce HTTP requests)
 let cachedCount = 0;
 let cachedCountTime = 0;
 
@@ -49,7 +48,6 @@ function getCacheTtl() {
     return (redisConfig && redisConfig.ONLINE_CACHE_TTL_MS) || 4000;
 }
 
-// Lua script for atomic add (reduces roundtrips significantly)
 const ADD_ONLINE_SCRIPT = `
   local counts_key = KEYS[1]
   local bitmap_key = KEYS[2]
@@ -101,14 +99,12 @@ async function addOnlineSocket(userId, _socketId) {
     const counterKey = getKey(COUNTER_KEY);
 
     try {
-        // Best case: 1 roundtrip using Lua
         const result = await redis.eval(ADD_ONLINE_SCRIPT, {
             keys: [countsKey, bitmapKey, mapKey, counterKey],
             arguments: [userId],
         });
         const newCount = Number(result);
 
-        // Proactively refresh in-memory cache on first connection (keeps data fresher)
         if (newCount === 1) {
             cachedCount = Math.max(cachedCount, 1);
             cachedCountTime = Date.now();
@@ -121,7 +117,7 @@ async function addOnlineSocket(userId, _socketId) {
 
         return newCount;
     } catch (err) {
-        // Fallback (Lua failed, e.g. permissions on Upstash)
+
         try {
             const newCount = await redis.hIncrBy(countsKey, userId, 1);
             if (newCount === 1) {
@@ -143,15 +139,14 @@ async function addOnlineSocket(userId, _socketId) {
             }
             return newCount;
         } catch (fallbackErr) {
-            // Both Lua and direct commands failed (common on restricted Upstash tokens).
-            // Degrade gracefully using local cache so the server stays up.
+
             cachedCount = Math.max(cachedCount || 0, 1);
             cachedCountTime = Date.now();
             if (!cachedUserIds.includes(userId)) {
                 cachedUserIds = [...cachedUserIds, userId];
                 cachedUserIdsTime = Date.now();
             }
-            // Return 1 so caller treats this as "first socket for user" (best effort)
+
             return 1;
         }
     }
@@ -172,7 +167,7 @@ async function removeOnlineSocket(userId, _socketId) {
         });
         const newCount = Number(result);
 
-        // Proactively update cache when user goes fully offline
+
         if (newCount === 0) {
             cachedCount = Math.max(0, cachedCount - 1);
             cachedCountTime = Date.now();
@@ -182,7 +177,7 @@ async function removeOnlineSocket(userId, _socketId) {
 
         return newCount;
     } catch (err) {
-        // Fallback (Lua failed)
+
         try {
             const newCount = await redis.hIncrBy(countsKey, userId, -1);
             if (newCount <= 0) {
@@ -201,7 +196,7 @@ async function removeOnlineSocket(userId, _socketId) {
             }
             return newCount;
         } catch (fallbackErr) {
-            // Commands blocked (e.g. restricted Upstash ACL token). Use local cache.
+
             cachedCount = Math.max(0, (cachedCount || 1) - 1);
             cachedCountTime = Date.now();
             cachedUserIds = cachedUserIds.filter(id => id !== userId);
@@ -215,7 +210,7 @@ async function getOnlineUserIds() {
     const now = Date.now();
     const ttl = getCacheTtl();
 
-    // Serve from short in-memory cache (greatly reduces load on Upstash REST)
+
     if (now - cachedUserIdsTime < ttl) {
         return cachedUserIds;
     }
@@ -237,7 +232,7 @@ async function getOnlineUserIds() {
         cachedUserIdsTime = now;
         return online;
     } catch (err) {
-        // Degrade: return whatever we have in cache (may be stale or empty)
+
         return cachedUserIds;
     }
 }
@@ -294,7 +289,7 @@ async function isUserOnline(userId) {
             const bit = await redis.getBit(bitmapKey, Number(offset));
             return bit === 1;
         } catch (err) {
-            // Fallback to counts hash
+
             const countsKey = getKey(COUNTS_KEY);
             const count = await redis.hGet(countsKey, userId);
             return Number(count || 0) > 0;
@@ -354,12 +349,12 @@ async function getOnlineMemoryStats() {
             const total = (result.bitmap || 0) + (result.counts || 0) + (result.map || 0);
             result.total = total > 0 ? total : null;
         } catch (err) {
-            // Ignore errors (some Upstash plans may not support MEMORY USAGE)
+
         }
 
         return result;
     } catch (err) {
-        // getRedis failed or other hard error
+
         return { bitmap: null, counts: null, map: null, total: null };
     }
 }

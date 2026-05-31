@@ -12,23 +12,68 @@ const ONLINE_USERS_EVENT = "users:online";
 const ALLOWED_CALL_TYPES = new Set(["voice", "video"]);
 const activeCallsByBoxId = new Map();
 
+const typingTimers = new Map();   // `typing:${boxId}` -> timer
+const iceRateLimit = new Map();   // boxId -> lastSent timestamp
+
+function scheduleTypingBroadcast(socket, boxId) {
+    const key = `typing:${boxId}`;
+
+    if (typingTimers.has(key)) {
+        clearTimeout(typingTimers.get(key));
+    }
+
+    const timer = setTimeout(() => {
+        socket.to(boxId).emit("chat:typing:start", {
+            userId: socket.data.userId,
+            boxId,
+        });
+        typingTimers.delete(key);
+    }, 400);
+
+    typingTimers.set(key, timer);
+}
+
+function clearPendingTyping(boxId) {
+    const key = `typing:${boxId}`;
+    if (typingTimers.has(key)) {
+        clearTimeout(typingTimers.get(key));
+        typingTimers.delete(key);
+    }
+}
+
+function shouldSendIceCandidate(boxId) {
+    const now = Date.now();
+    const lastSent = iceRateLimit.get(boxId) || 0;
+
+    if (now - lastSent < 80) {
+        return false;
+    }
+
+    iceRateLimit.set(boxId, now);
+    return true;
+}
+
+function cleanupBoxState(boxId) {
+    activeCallsByBoxId.delete(boxId);
+    clearPendingTyping(boxId);
+    iceRateLimit.delete(boxId);
+}
+
+function cleanupBoxStateOnDisconnect(userId) {
+    for (const [key, timer] of typingTimers) {
+        if (key.includes(userId)) {
+            clearTimeout(timer);
+            typingTimers.delete(key);
+        }
+    }
+}
+
 function registerSocketHandlers(io, app) {
     initOnlineStore(app.config);
 
     io.on("connection", async(socket) => {
-        const isInternal = socket.handshake.auth?.type === "internal";
-        if (isInternal) {
-            app.log.info({ socketId: socket.id }, "Internal API connected");
-            socket.onAny((event, payload) => {
-                socket.to(String(payload.targetId)).emit(event, payload.data ?? {});
-            });
+        const userId = socket.data.userId || toValidUserId(extractUserId(socket));
 
-            return;
-        }
-
-        const userId = toValidUserId(extractUserId(socket));
-
-        socket.data.userId = userId;
         socket.join(userId);
 
         let onlineSocketsCount = 0;
@@ -99,14 +144,12 @@ function registerSocketHandlers(io, app) {
 
         socket.on("chat:typing:start", (payload = {}) => {
             if (!payload.boxId) return;
-            socket.to(String(payload.boxId)).emit("chat:typing:start", {
-                userId: socket.data.userId,
-                boxId: payload.boxId,
-            });
+            scheduleTypingBroadcast(socket, String(payload.boxId));
         });
 
         socket.on("chat:typing:stop", (payload = {}) => {
             if (!payload.boxId) return;
+            clearPendingTyping(String(payload.boxId));
             socket.to(String(payload.boxId)).emit("chat:typing:stop", {
                 userId: socket.data.userId,
                 boxId: payload.boxId,
@@ -153,28 +196,37 @@ function registerSocketHandlers(io, app) {
 
         socket.on("chat:call:ice-candidate", (payload = {}) => {
             if (!payload.boxId || !payload.candidate) return;
-            socket.to(String(payload.boxId)).emit("chat:call:ice-candidate", {
+
+            const boxId = String(payload.boxId);
+
+            if (!shouldSendIceCandidate(boxId)) {
+                return; // throttled for load protection
+            }
+
+            socket.to(boxId).emit("chat:call:ice-candidate", {
                 userId: socket.data.userId,
-                boxId: payload.boxId,
+                boxId,
                 candidate: payload.candidate,
             });
         });
 
         socket.on("chat:call:reject", (payload = {}) => {
             if (!payload.boxId) return;
-            activeCallsByBoxId.delete(String(payload.boxId));
+            cleanupBoxState(String(payload.boxId));
+
             socket.to(String(payload.boxId)).emit("chat:call:reject", {
                 userId: socket.data.userId,
-                boxId: String(payload.boxId),
+                boxId: payload.boxId,
             });
         });
 
         socket.on("chat:call:end", (payload = {}) => {
             if (!payload.boxId) return;
-            activeCallsByBoxId.delete(String(payload.boxId));
+            cleanupBoxState(String(payload.boxId));
+
             socket.to(String(payload.boxId)).emit("chat:call:end", {
                 userId: socket.data.userId,
-                boxId: String(payload.boxId),
+                boxId: payload.boxId,
             });
         });
 
@@ -201,6 +253,8 @@ function registerSocketHandlers(io, app) {
             if (onlineSocketsCount === 0) {
                 socket.broadcast.emit("user:offline", { userId });
             }
+
+            cleanupBoxStateOnDisconnect(userId);
         });
     });
 }

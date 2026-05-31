@@ -8,18 +8,12 @@ async function sendHealthResponse(res, io) {
 
     try {
         onlineUsers = await getOnlineUsersCount();
-    } catch (err) {
-        // Redis down - still return basic health
-    }
+    } catch (err) {}
 
-    // Memory usage of the Redis Bitmap online tracking keys
     try {
         memory.redis = await getOnlineMemoryStats();
-    } catch (err) {
-        // ignore on Upstash or if command not supported
-    }
+    } catch (err) {}
 
-    // Node.js process memory
     const nodeMem = process.memoryUsage();
     memory.node = {
         rss: nodeMem.rss,

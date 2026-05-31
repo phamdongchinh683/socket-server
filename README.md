@@ -36,17 +36,7 @@ You can use either:
 
 - `UPSTASH_REDIS_REST_URL`
 - `UPSTASH_REDIS_REST_TOKEN`
-
-**B. Standard Redis / self-hosted**
-
-- `REDIS_URL` = full connection string, e.g. `redis://:password@host:6379/0`
-- OR individual vars:
-  - `REDIS_HOST`
-  - `REDIS_PORT` (default: 6379)
-  - `REDIS_PASSWORD`
-  - `REDIS_DB` (default: 0)
-
-Optional for both:
+- `SOCKET_REDIS_URL`
 
 - `REDIS_KEY_PREFIX` = namespace prefix for keys (default: `socket`)
 

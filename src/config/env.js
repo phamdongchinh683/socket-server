@@ -63,39 +63,28 @@ function loadConfig() {
     loadDotEnv();
 
     const port = Number(process.env.PORT);
-    const redisPort = Number(process.env.REDIS_PORT);
-    const cacheTtl = Number(process.env.ONLINE_CACHE_TTL_MS);
 
     return {
         PORT: Number.isFinite(port) && port > 0 ? port : 4444,
-        HOST: process.env.HOST?.trim() || "0.0.0.0",
-
+        HOST: requireString("HOST") || "localhost",
         JWT_SECRET: requireString("JWT_SECRET"),
         API_URL: requireString("API_URL"),
-        INTERNAL_SOCKET_TOKEN: requireString("INTERNAL_SOCKET_TOKEN"),
-
-        LOG_LEVEL: process.env.LOG_LEVEL?.trim() || "error",
-        SOCKET_TRANSPORTS: process.env.SOCKET_TRANSPORTS?.trim() || "websocket",
+        LOG_LEVEL: 'info',
+        SOCKET_TRANSPORTS: 'websocket',
         SOCKET_PER_MESSAGE_DEFLATE: parseBoolean(
             process.env.SOCKET_PER_MESSAGE_DEFLATE,
             false
         ),
         SOCKET_SERVE_CLIENT: parseBoolean(process.env.SOCKET_SERVE_CLIENT, false),
 
-        // Redis (TCP / self-hosted)
-        REDIS_URL: process.env.REDIS_URL?.trim() || null,
-        REDIS_HOST: process.env.REDIS_HOST?.trim() || "127.0.0.1",
-        REDIS_PORT: Number.isFinite(redisPort) && redisPort > 0 ? redisPort : 6379,
-        REDIS_PASSWORD: process.env.REDIS_PASSWORD?.trim() || null,
-        REDIS_DB: Number.isFinite(Number(process.env.REDIS_DB)) ? Number(process.env.REDIS_DB) : 0,
-        REDIS_KEY_PREFIX: process.env.REDIS_KEY_PREFIX?.trim() || "socket",
+        REDIS_KEY_PREFIX: process.env.REDIS_KEY_PREFIX,
 
-        // Upstash Redis (REST)
-        UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL?.trim() || null,
-        UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN?.trim() || null,
+        SOCKET_REDIS_URL: process.env.SOCKET_REDIS_URL,
 
-        // Online user tracking cache
-        ONLINE_CACHE_TTL_MS: Number.isFinite(cacheTtl) && cacheTtl > 0 ? cacheTtl : 4000,
+        UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL,
+        UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN,
+
+        ONLINE_CACHE_TTL_MS: Number.isFinite(process.env.ONLINE_CACHE_TTL_MS),
     };
 }
 

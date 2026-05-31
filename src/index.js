@@ -5,7 +5,7 @@ async function start() {
     let runtime;
 
     try {
-        runtime = buildServer();
+        runtime = await buildServer();
         const { httpServer, config, log } = runtime;
 
         try {

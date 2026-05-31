@@ -5,7 +5,7 @@ const { registerSocketServer } = require("./plugins/socket");
 const { sendHealthResponse } = require("./routes/health");
 const { closeRedis } = require("./redis/client");
 
-function buildServer() {
+async function buildServer() {
   const config = loadConfig();
   const log = createLogger(config.LOG_LEVEL);
 
@@ -16,7 +16,6 @@ function buildServer() {
     const url = req.url?.split("?")[0] || "/";
 
     if (method === "GET" && url === "/health") {
-      // Handle async health check (Redis-backed online count via bitmap)
       Promise.resolve(sendHealthResponse(res, httpServer.io)).catch((err) => {
         log.error({ err }, "Health check failed");
         if (!res.headersSent) {
@@ -31,11 +30,30 @@ function buildServer() {
     res.end("Not Found");
   });
 
-  const io = registerSocketServer(httpServer, app);
+  const io = await registerSocketServer(httpServer, app);
   httpServer.io = io;
 
   async function close() {
     await new Promise((resolve) => io.close(resolve));
+
+    const adapterClients = io._redisAdapterClients;
+    if (adapterClients) {
+      try {
+        await adapterClients.pubClient.quit().catch(() => {});
+        await adapterClients.subClient.quit().catch(() => {});
+      } catch (err) {
+        log.error({ err }, "Failed to close Redis adapter clients");
+      }
+    }
+
+    if (io._socketEventsSub) {
+      try {
+        await io._socketEventsSub.quit().catch(() => {});
+      } catch (err) {
+        log.error({ err }, "Failed to close socket:events subscriber");
+      }
+    }
+
     await closeRedis().catch((err) => log.error({ err }, "Redis close failed"));
   }
 
