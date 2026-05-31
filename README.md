@@ -28,6 +28,62 @@ Set these in Render -> Environment:
 - `HOST` = `0.0.0.0`
 - `NODE_ENV` = `production`
 
+**Redis (required for distributed online user tracking via bitmap):**
+
+You can use either:
+
+**A. Upstash Redis (recommended for Render / serverless-friendly)**
+
+- `UPSTASH_REDIS_REST_URL`
+- `UPSTASH_REDIS_REST_TOKEN`
+
+**B. Standard Redis / self-hosted**
+
+- `REDIS_URL` = full connection string, e.g. `redis://:password@host:6379/0`
+- OR individual vars:
+  - `REDIS_HOST`
+  - `REDIS_PORT` (default: 6379)
+  - `REDIS_PASSWORD`
+  - `REDIS_DB` (default: 0)
+
+Optional for both:
+
+- `REDIS_KEY_PREFIX` = namespace prefix for keys (default: `socket`)
+
+- `ONLINE_CACHE_TTL_MS` = short in-memory cache time for online count & list (default: `4000` ms).
+  Strongly recommended when using **Upstash REST** to reduce HTTP requests.
+
+### Health endpoint
+
+`GET /health` now returns memory usage:
+
+```json
+{
+  "message": "OK",
+  "clients": 42,
+  "onlineUsers": 38,
+  "memory": {
+    "redis": {
+      "bitmap": 12345,
+      "counts": 67890,
+      "map": 23456,
+      "total": 103691
+    },
+    "node": {
+      "rss": 76234752,
+      "heapUsed": 15725096,
+      "heapTotal": 17809408,
+      "external": 3622048
+    }
+  }
+}
+```
+
+- `memory.redis`: Approximate memory used by the online bitmap keys (in bytes). May be `null` on some Upstash plans.
+- `memory.node`: Node.js process memory usage.
+
+This allows your main backend to query who is currently online.
+
 Render automatically provides `PORT`, and the server already supports it.
 
 ### 5) Test after deploy
