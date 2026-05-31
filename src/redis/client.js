@@ -21,7 +21,8 @@ function wrapNodeRedis(client) {
             return client.hIncrBy(key, field, increment);
         },
         async hGetAll(key) {
-            return client.hGetAll(key);
+            const res = await client.hGetAll(key);
+            return res || {};
         },
         async incr(key) {
             return client.incr(key);
@@ -67,7 +68,8 @@ function wrapUpstash(redis) {
             return redis.hincrby(key, field, increment);
         },
         async hGetAll(key) {
-            return redis.hgetall(key);
+            const res = await redis.hgetall(key);
+            return res || {};
         },
         async incr(key) {
             return redis.incr(key);
@@ -187,13 +189,6 @@ function getRedisClient(config) {
     return rawClient;
 }
 
-/**
- * Connect and return a **normalized** Redis client with consistent camelCase API.
- * Works with both node-redis (TCP) and @upstash/redis (REST).
- *
- * Methods provided:
- *   hGet, hSet, hIncrBy, hGetAll, incr, setBit, quit, isOpen
- */
 async function connectRedis(config) {
     if (normalizedClient) {
         return normalizedClient;
@@ -210,7 +205,6 @@ async function connectRedis(config) {
         return normalizedClient;
     }
 
-    // node-redis path
     isUpstash = false;
     const raw = getRedisClient(config);
 

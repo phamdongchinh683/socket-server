@@ -121,26 +121,39 @@ async function addOnlineSocket(userId, _socketId) {
 
         return newCount;
     } catch (err) {
-        // Fallback
-        const newCount = await redis.hIncrBy(countsKey, userId, 1);
-        if (newCount === 1) {
-            const mapKey2 = getKey(MAP_KEY);
-            let offset = await redis.hGet(mapKey2, userId);
-            if (offset == null) {
-                const counterKey2 = getKey(COUNTER_KEY);
-                offset = await redis.incr(counterKey2);
-                await redis.hSet(mapKey2, userId, String(offset));
-            }
-            await redis.setBit(getKey(BITMAP_KEY), Number(offset), 1);
+        // Fallback (Lua failed, e.g. permissions on Upstash)
+        try {
+            const newCount = await redis.hIncrBy(countsKey, userId, 1);
+            if (newCount === 1) {
+                const mapKey2 = getKey(MAP_KEY);
+                let offset = await redis.hGet(mapKey2, userId);
+                if (offset == null) {
+                    const counterKey2 = getKey(COUNTER_KEY);
+                    offset = await redis.incr(counterKey2);
+                    await redis.hSet(mapKey2, userId, String(offset));
+                }
+                await redis.setBit(getKey(BITMAP_KEY), Number(offset), 1);
 
-            cachedCount = Math.max(cachedCount, 1);
+                cachedCount = Math.max(cachedCount, 1);
+                cachedCountTime = Date.now();
+                if (!cachedUserIds.includes(userId)) {
+                    cachedUserIds = [...cachedUserIds, userId];
+                    cachedUserIdsTime = Date.now();
+                }
+            }
+            return newCount;
+        } catch (fallbackErr) {
+            // Both Lua and direct commands failed (common on restricted Upstash tokens).
+            // Degrade gracefully using local cache so the server stays up.
+            cachedCount = Math.max(cachedCount || 0, 1);
             cachedCountTime = Date.now();
             if (!cachedUserIds.includes(userId)) {
                 cachedUserIds = [...cachedUserIds, userId];
                 cachedUserIdsTime = Date.now();
             }
+            // Return 1 so caller treats this as "first socket for user" (best effort)
+            return 1;
         }
-        return newCount;
     }
 }
 
@@ -169,23 +182,32 @@ async function removeOnlineSocket(userId, _socketId) {
 
         return newCount;
     } catch (err) {
-        // Fallback
-        const newCount = await redis.hIncrBy(countsKey, userId, -1);
-        if (newCount <= 0) {
-            await redis.hSet(countsKey, userId, "0");
-            const offset = await redis.hGet(mapKey, userId);
-            if (offset != null) {
-                await redis.setBit(bitmapKey, Number(offset), 0);
-            }
+        // Fallback (Lua failed)
+        try {
+            const newCount = await redis.hIncrBy(countsKey, userId, -1);
+            if (newCount <= 0) {
+                await redis.hSet(countsKey, userId, "0");
+                const offset = await redis.hGet(mapKey, userId);
+                if (offset != null) {
+                    await redis.setBit(bitmapKey, Number(offset), 0);
+                }
 
-            cachedCount = Math.max(0, cachedCount - 1);
+                cachedCount = Math.max(0, cachedCount - 1);
+                cachedCountTime = Date.now();
+                cachedUserIds = cachedUserIds.filter(id => id !== userId);
+                cachedUserIdsTime = Date.now();
+
+                return 0;
+            }
+            return newCount;
+        } catch (fallbackErr) {
+            // Commands blocked (e.g. restricted Upstash ACL token). Use local cache.
+            cachedCount = Math.max(0, (cachedCount || 1) - 1);
             cachedCountTime = Date.now();
             cachedUserIds = cachedUserIds.filter(id => id !== userId);
             cachedUserIdsTime = Date.now();
-
             return 0;
         }
-        return newCount;
     }
 }
 
@@ -198,21 +220,26 @@ async function getOnlineUserIds() {
         return cachedUserIds;
     }
 
-    const redis = await getRedis();
-    const countsKey = getKey(COUNTS_KEY);
+    try {
+        const redis = await getRedis();
+        const countsKey = getKey(COUNTS_KEY);
 
-    const counts = await redis.hGetAll(countsKey);
-    const online = [];
+        const counts = await redis.hGetAll(countsKey) || {};
+        const online = [];
 
-    for (const [userId, countStr] of Object.entries(counts)) {
-        if (Number(countStr) > 0) {
-            online.push(userId);
+        for (const [userId, countStr] of Object.entries(counts)) {
+            if (Number(countStr) > 0) {
+                online.push(userId);
+            }
         }
-    }
 
-    cachedUserIds = online;
-    cachedUserIdsTime = now;
-    return online;
+        cachedUserIds = online;
+        cachedUserIdsTime = now;
+        return online;
+    } catch (err) {
+        // Degrade: return whatever we have in cache (may be stale or empty)
+        return cachedUserIds;
+    }
 }
 
 async function getOnlineUsersCount() {
@@ -223,48 +250,58 @@ async function getOnlineUsersCount() {
         return cachedCount;
     }
 
-    const redis = await getRedis();
-    const bitmapKey = getKey(BITMAP_KEY);
-
     try {
-        const count = await redis.bitCount(bitmapKey);
-        cachedCount = Number(count) || 0;
-        cachedCountTime = now;
-        return cachedCount;
-    } catch (err) {
-        // Fallback
-        const countsKey = getKey(COUNTS_KEY);
-        const counts = await redis.hGetAll(countsKey);
-        let count = 0;
-        for (const value of Object.values(counts)) {
-            if (Number(value) > 0) count += 1;
+        const redis = await getRedis();
+        const bitmapKey = getKey(BITMAP_KEY);
+
+        try {
+            const count = await redis.bitCount(bitmapKey);
+            cachedCount = Number(count) || 0;
+            cachedCountTime = now;
+            return cachedCount;
+        } catch (err) {
+            // Fallback
+            const countsKey = getKey(COUNTS_KEY);
+            const counts = await redis.hGetAll(countsKey) || {};
+            let count = 0;
+            for (const value of Object.values(counts)) {
+                if (Number(value) > 0) count += 1;
+            }
+            cachedCount = count;
+            cachedCountTime = now;
+            return count;
         }
-        cachedCount = count;
-        cachedCountTime = now;
-        return count;
+    } catch (err) {
+        // Total Redis failure - return cached (or 0)
+        return cachedCount || 0;
     }
 }
 
 async function isUserOnline(userId) {
     if (!userId) return false;
 
-    const redis = await getRedis();
-    const mapKey = getKey(MAP_KEY);
-    const bitmapKey = getKey(BITMAP_KEY);
-
-    const offset = await redis.hGet(mapKey, userId);
-    if (offset == null) {
-        return false;
-    }
-
     try {
-        const bit = await redis.getBit(bitmapKey, Number(offset));
-        return bit === 1;
+        const redis = await getRedis();
+        const mapKey = getKey(MAP_KEY);
+        const bitmapKey = getKey(BITMAP_KEY);
+
+        const offset = await redis.hGet(mapKey, userId);
+        if (offset == null) {
+            return false;
+        }
+
+        try {
+            const bit = await redis.getBit(bitmapKey, Number(offset));
+            return bit === 1;
+        } catch (err) {
+            // Fallback to counts hash
+            const countsKey = getKey(COUNTS_KEY);
+            const count = await redis.hGet(countsKey, userId);
+            return Number(count || 0) > 0;
+        }
     } catch (err) {
-        // Fallback to counts hash
-        const countsKey = getKey(COUNTS_KEY);
-        const count = await redis.hGet(countsKey, userId);
-        return Number(count || 0) > 0;
+        // Redis unavailable or permission error - best effort false
+        return false;
     }
 }
 
@@ -274,11 +311,15 @@ async function isUserOnline(userId) {
 async function getUserBitOffset(userId) {
     if (!userId) return null;
 
-    const redis = await getRedis();
-    const mapKey = getKey(MAP_KEY);
+    try {
+        const redis = await getRedis();
+        const mapKey = getKey(MAP_KEY);
 
-    const offset = await redis.hGet(mapKey, userId);
-    return offset != null ? Number(offset) : null;
+        const offset = await redis.hGet(mapKey, userId);
+        return offset != null ? Number(offset) : null;
+    } catch (err) {
+        return null;
+    }
 }
 
 /**
@@ -286,36 +327,41 @@ async function getUserBitOffset(userId) {
  * Useful for monitoring on Upstash or self-hosted Redis.
  */
 async function getOnlineMemoryStats() {
-    const redis = await getRedis();
-    const bitmapKey = getKey(BITMAP_KEY);
-    const countsKey = getKey(COUNTS_KEY);
-    const mapKey = getKey(MAP_KEY);
-
-    const result = {
-        bitmap: null,
-        counts: null,
-        map: null,
-        total: null,
-    };
-
     try {
-        const [bitmapUsage, countsUsage, mapUsage] = await Promise.all([
-            redis.eval('return redis.call("MEMORY", "USAGE", KEYS[1])', { keys: [bitmapKey] }).catch(() => null),
-            redis.eval('return redis.call("MEMORY", "USAGE", KEYS[1])', { keys: [countsKey] }).catch(() => null),
-            redis.eval('return redis.call("MEMORY", "USAGE", KEYS[1])', { keys: [mapKey] }).catch(() => null),
-        ]);
+        const redis = await getRedis();
+        const bitmapKey = getKey(BITMAP_KEY);
+        const countsKey = getKey(COUNTS_KEY);
+        const mapKey = getKey(MAP_KEY);
 
-        result.bitmap = bitmapUsage ? Number(bitmapUsage) : null;
-        result.counts = countsUsage ? Number(countsUsage) : null;
-        result.map = mapUsage ? Number(mapUsage) : null;
+        const result = {
+            bitmap: null,
+            counts: null,
+            map: null,
+            total: null,
+        };
 
-        const total = (result.bitmap || 0) + (result.counts || 0) + (result.map || 0);
-        result.total = total > 0 ? total : null;
+        try {
+            const [bitmapUsage, countsUsage, mapUsage] = await Promise.all([
+                redis.eval('return redis.call("MEMORY", "USAGE", KEYS[1])', { keys: [bitmapKey] }).catch(() => null),
+                redis.eval('return redis.call("MEMORY", "USAGE", KEYS[1])', { keys: [countsKey] }).catch(() => null),
+                redis.eval('return redis.call("MEMORY", "USAGE", KEYS[1])', { keys: [mapKey] }).catch(() => null),
+            ]);
+
+            result.bitmap = bitmapUsage ? Number(bitmapUsage) : null;
+            result.counts = countsUsage ? Number(countsUsage) : null;
+            result.map = mapUsage ? Number(mapUsage) : null;
+
+            const total = (result.bitmap || 0) + (result.counts || 0) + (result.map || 0);
+            result.total = total > 0 ? total : null;
+        } catch (err) {
+            // Ignore errors (some Upstash plans may not support MEMORY USAGE)
+        }
+
+        return result;
     } catch (err) {
-        // Ignore errors (some Upstash plans may not support MEMORY USAGE)
+        // getRedis failed or other hard error
+        return { bitmap: null, counts: null, map: null, total: null };
     }
-
-    return result;
 }
 
 module.exports = {

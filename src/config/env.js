@@ -64,13 +64,16 @@ function loadConfig() {
 
     const port = Number(process.env.PORT);
     const redisPort = Number(process.env.REDIS_PORT);
+    const cacheTtl = Number(process.env.ONLINE_CACHE_TTL_MS);
 
     return {
         PORT: Number.isFinite(port) && port > 0 ? port : 4444,
         HOST: process.env.HOST?.trim() || "0.0.0.0",
+
         JWT_SECRET: requireString("JWT_SECRET"),
         API_URL: requireString("API_URL"),
         INTERNAL_SOCKET_TOKEN: requireString("INTERNAL_SOCKET_TOKEN"),
+
         LOG_LEVEL: process.env.LOG_LEVEL?.trim() || "error",
         SOCKET_TRANSPORTS: process.env.SOCKET_TRANSPORTS?.trim() || "websocket",
         SOCKET_PER_MESSAGE_DEFLATE: parseBoolean(
@@ -79,7 +82,7 @@ function loadConfig() {
         ),
         SOCKET_SERVE_CLIENT: parseBoolean(process.env.SOCKET_SERVE_CLIENT, false),
 
-        // Redis / Upstash
+        // Redis (TCP / self-hosted)
         REDIS_URL: process.env.REDIS_URL?.trim() || null,
         REDIS_HOST: process.env.REDIS_HOST?.trim() || "127.0.0.1",
         REDIS_PORT: Number.isFinite(redisPort) && redisPort > 0 ? redisPort : 6379,
@@ -87,11 +90,12 @@ function loadConfig() {
         REDIS_DB: Number.isFinite(Number(process.env.REDIS_DB)) ? Number(process.env.REDIS_DB) : 0,
         REDIS_KEY_PREFIX: process.env.REDIS_KEY_PREFIX?.trim() || "socket",
 
+        // Upstash Redis (REST)
         UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL?.trim() || null,
         UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN?.trim() || null,
 
-        // Short in-memory cache for online status (very helpful with Upstash REST to reduce HTTP calls)
-        ONLINE_CACHE_TTL_MS: Number(process.env.ONLINE_CACHE_TTL_MS) || 4000,
+        // Online user tracking cache
+        ONLINE_CACHE_TTL_MS: Number.isFinite(cacheTtl) && cacheTtl > 0 ? cacheTtl : 4000,
     };
 }
 

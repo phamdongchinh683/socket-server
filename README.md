@@ -92,3 +92,34 @@ Render automatically provides `PORT`, and the server already supports it.
 - Socket.IO URL in client/Postman: `https://<your-render-domain>`
 
 For auth, send a valid JWT: `Authorization: Bearer <token>`, or `auth.token`, or query `token`. The token must include `sub` (or `userId` / `id`) for the account id.
+
+## Troubleshooting
+
+### Upstash Redis "NOPERM ... 'hincrby'" error
+
+If you see this on startup or connection:
+
+```
+UpstashError: Command failed: NOPERM this user has no permissions to run the 'hincrby' command or its subcommand
+```
+
+**Cause**: Your Upstash REST token has restricted ACL permissions (common when using custom database users, read-only tokens, or the new ACL feature).
+
+**Required commands** for the online presence feature (bitmap + hash counters):
+
+- Hash: `HINCRBY`, `HGET`, `HSET`, `HGETALL`
+- Key: `INCR`
+- Bitmap: `SETBIT`, `GETBIT`, `BITCOUNT`
+- Scripting: `EVAL` (used for atomic Lua updates)
+
+**Fix**:
+1. Go to [Upstash Console](https://console.upstash.com/) → your Redis database
+2. Go to **"ACL"** (or "Tokens" / "Database Users")
+3. Either:
+   - Use the **default "default" user** / main REST token (has full permissions), **or**
+   - Create/edit the token/user and grant the commands above (or give `+@hash +@bitmap +@keyspace +@scripting` categories)
+4. Update `UPSTASH_REDIS_REST_TOKEN` in Render with the new token
+
+After fixing the token, redeploy. The server now degrades gracefully if some commands remain blocked (no more crashes).
+
+The code also falls back to local in-memory cache when Redis commands are denied, so the socket server stays healthy.
