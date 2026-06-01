@@ -63,10 +63,11 @@ function loadConfig() {
     loadDotEnv();
 
     const host = process.env.HOST || "0.0.0.0";
+    // Always respect PORT injected by Render/Heroku/etc. Only fallback to 4444 for local dev.
     const port = Number(process.env.PORT);
 
     return {
-        PORT: Number.isFinite(port) && port > 0 ? port : 4444,
+        PORT: port || 4444,
         HOST: host,
         JWT_SECRET: requireString("JWT_SECRET"),
         API_URL: requireString("API_URL"),
