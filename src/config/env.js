@@ -62,15 +62,16 @@ function requireString(name) {
 function loadConfig() {
     loadDotEnv();
 
+    const host = process.env.HOST || "0.0.0.0";
     const port = Number(process.env.PORT);
 
     return {
         PORT: Number.isFinite(port) && port > 0 ? port : 4444,
-        HOST: requireString("HOST") || "localhost",
+        HOST: host,
         JWT_SECRET: requireString("JWT_SECRET"),
         API_URL: requireString("API_URL"),
-        LOG_LEVEL: 'info',
-        SOCKET_TRANSPORTS: 'websocket',
+        LOG_LEVEL: "info",
+        SOCKET_TRANSPORTS: "websocket",
         SOCKET_PER_MESSAGE_DEFLATE: parseBoolean(
             process.env.SOCKET_PER_MESSAGE_DEFLATE,
             false
@@ -78,13 +79,12 @@ function loadConfig() {
         SOCKET_SERVE_CLIENT: parseBoolean(process.env.SOCKET_SERVE_CLIENT, false),
 
         REDIS_KEY_PREFIX: process.env.REDIS_KEY_PREFIX,
-
         SOCKET_REDIS_URL: process.env.SOCKET_REDIS_URL,
 
         UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL,
         UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN,
 
-        ONLINE_CACHE_TTL_MS: Number.isFinite(process.env.ONLINE_CACHE_TTL_MS),
+        ONLINE_CACHE_TTL_MS: Number(process.env.ONLINE_CACHE_TTL_MS) || 30000,
     };
 }
 
