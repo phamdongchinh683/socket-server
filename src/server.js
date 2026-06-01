@@ -11,9 +11,19 @@ async function buildServer() {
 
     const app = { config, log };
 
-    const httpServer = http.createServer((req, res) => {
+    const httpServer = http.createServer(async (req, res) => {
         const method = req.method || "GET";
         const url = req.url?.split("?")[0] || "/";
+
+        if (method === "GET" && url === "/health") {
+            try {
+                await sendHealthResponse(res, httpServer.io);
+            } catch (err) {
+                res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
+                res.end(JSON.stringify({ status: "ERROR", message: "Health check failed" }));
+            }
+            return;
+        }
 
         res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
         res.end("Not Found");
