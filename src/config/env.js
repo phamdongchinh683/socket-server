@@ -63,6 +63,7 @@ function loadConfig() {
     loadDotEnv();
 
     const host = process.env.HOST || "0.0.0.0";
+    const redisUrl = process.env.REDIS_URL || process.env.SOCKET_REDIS_URL;
     // Always respect PORT injected by Render/Heroku/etc. Only fallback to 4444 for local dev.
     const port = Number(process.env.PORT);
 
@@ -80,10 +81,7 @@ function loadConfig() {
         SOCKET_SERVE_CLIENT: parseBoolean(process.env.SOCKET_SERVE_CLIENT, false),
 
         REDIS_KEY_PREFIX: process.env.REDIS_KEY_PREFIX,
-        SOCKET_REDIS_URL: process.env.SOCKET_REDIS_URL,
-
-        UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL,
-        UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN,
+        REDIS_URL: redisUrl,
 
         ONLINE_CACHE_TTL_MS: Number(process.env.ONLINE_CACHE_TTL_MS) || 30000,
     };

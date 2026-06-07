@@ -16,7 +16,6 @@
   "type": "commonjs",
   "dependencies": {
     "@socket.io/redis-adapter": "^8.3.0",
-    "@upstash/redis": "^1.38.0",
     "jsonwebtoken": "^9.0.3",
     "redis": "^6.0.0",
     "socket.io": "^4.8.3"

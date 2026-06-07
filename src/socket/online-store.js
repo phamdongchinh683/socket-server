@@ -319,7 +319,7 @@ async function getUserBitOffset(userId) {
 
 /**
  * Get approximate memory usage of the online tracking keys in Redis.
- * Useful for monitoring on Upstash or self-hosted Redis.
+ * Useful for monitoring Redis memory usage.
  */
 async function getOnlineMemoryStats() {
     try {
