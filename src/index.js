@@ -10,8 +10,7 @@ async function start() {
 
         try {
             await connectRedis(config);
-            const usingUpstash = !!(config.UPSTASH_REDIS_REST_URL && config.UPSTASH_REDIS_REST_TOKEN);
-            log.info({ backend: usingUpstash ? "upstash" : "redis" }, "Redis connected (online user tracking ready)");
+            log.info("Redis Cloud connected (online user tracking ready)");
         } catch (redisErr) {
             log.error({ err: redisErr }, "Failed to connect to Redis - online tracking will be degraded");
         }

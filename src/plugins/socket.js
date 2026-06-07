@@ -59,8 +59,6 @@ async function registerSocketServer(httpServer, app) {
             } catch (err) {
                 app.log.error({ err }, "Failed to subscribe to 'socket:events' channel");
             }
-        } else {
-            app.log.warn("Socket.IO Redis adapter disabled (Upstash detected) - run only 1 instance");
         }
     } catch (err) {
         app.log.error({ err }, "Failed to initialize Socket.IO Redis adapter - continuing without it");

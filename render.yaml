@@ -15,6 +15,5 @@ services:
         sync: false
       - key: API_URL
         sync: false
-      # Redis riêng cho Socket.IO adapter (Pub/Sub). Dùng khi muốn giữ Upstash cho online presence.
-      # - key: SOCKET_REDIS_URL
-      #   sync: false
+      - key: REDIS_URL
+        sync: false
