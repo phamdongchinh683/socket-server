@@ -1,7 +1,7 @@
-const { connectRedis } = require("../redis/client");
+const { getUpstashClient, isUpstashConfigured, connectRedis } = require("../redis/client");
 
 let redisConfig = null;
-let redisClient = null;
+let redisClient = null; // node-redis or upstash instance
 
 const BITMAP_KEY = "online:bitmap";
 const COUNTS_KEY = "online:counts";
@@ -30,14 +30,74 @@ function getKey(name) {
     return `${redisConfig.REDIS_KEY_PREFIX}:${name}`;
 }
 
+function isUpstash() {
+    return isUpstashConfigured(redisConfig);
+}
+
 async function getRedis() {
     if (!redisConfig) {
         throw new Error("Redis config not initialized. Call initOnlineStore(config) first.");
     }
     if (!redisClient) {
-        redisClient = await connectRedis(redisConfig);
+        if (isUpstash()) {
+            redisClient = getUpstashClient(redisConfig);
+        } else {
+            redisClient = await connectRedis(redisConfig);
+        }
     }
     return redisClient;
+}
+
+// Normalize eval call across node-redis and @upstash/redis
+async function runEval(redis, script, keys, args) {
+    if (isUpstash()) {
+        // @upstash/redis: eval(script, keysArray, argsArray)
+        return redis.eval(script, keys, args);
+    }
+    // node-redis v6
+    return redis.eval(script, { keys, arguments: args });
+}
+
+// Small helpers to normalize common commands (node-redis uses Pascal-ish, upstash uses lower)
+async function hIncrBy(redis, key, field, delta) {
+    if (isUpstash()) return redis.hincrby(key, field, delta);
+    return redis.hIncrBy(key, field, delta);
+}
+
+async function hGet(redis, key, field) {
+    if (isUpstash()) return redis.hget(key, field);
+    return redis.hGet(key, field);
+}
+
+async function hSet(redis, key, field, value) {
+    if (isUpstash()) return redis.hset(key, { [field]: value });
+    return redis.hSet(key, field, value);
+}
+
+async function hGetAll(redis, key) {
+    if (isUpstash()) return redis.hgetall(key) || {};
+    const res = await redis.hGetAll(key);
+    return res || {};
+}
+
+async function doIncr(redis, key) {
+    if (isUpstash()) return redis.incr(key);
+    return redis.incr(key);
+}
+
+async function doSetBit(redis, key, offset, value) {
+    if (isUpstash()) return redis.setbit(key, offset, value);
+    return redis.setBit(key, offset, value);
+}
+
+async function doGetBit(redis, key, offset) {
+    if (isUpstash()) return redis.getbit(key, offset);
+    return redis.getBit(key, offset);
+}
+
+async function doBitCount(redis, key) {
+    if (isUpstash()) return redis.bitcount(key);
+    return redis.bitCount(key);
 }
 
 function initOnlineStore(config) {
@@ -99,10 +159,7 @@ async function addOnlineSocket(userId, _socketId) {
     const counterKey = getKey(COUNTER_KEY);
 
     try {
-        const result = await redis.eval(ADD_ONLINE_SCRIPT, {
-            keys: [countsKey, bitmapKey, mapKey, counterKey],
-            arguments: [userId],
-        });
+        const result = await runEval(redis, ADD_ONLINE_SCRIPT, [countsKey, bitmapKey, mapKey, counterKey], [userId]);
         const newCount = Number(result);
 
         if (newCount === 1) {
@@ -119,16 +176,16 @@ async function addOnlineSocket(userId, _socketId) {
     } catch (err) {
 
         try {
-            const newCount = await redis.hIncrBy(countsKey, userId, 1);
+            const newCount = await hIncrBy(redis, countsKey, userId, 1);
             if (newCount === 1) {
                 const mapKey2 = getKey(MAP_KEY);
-                let offset = await redis.hGet(mapKey2, userId);
+                let offset = await hGet(redis, mapKey2, userId);
                 if (offset == null) {
                     const counterKey2 = getKey(COUNTER_KEY);
-                    offset = await redis.incr(counterKey2);
-                    await redis.hSet(mapKey2, userId, String(offset));
+                    offset = await doIncr(redis, counterKey2);
+                    await hSet(redis, mapKey2, userId, String(offset));
                 }
-                await redis.setBit(getKey(BITMAP_KEY), Number(offset), 1);
+                await doSetBit(redis, getKey(BITMAP_KEY), Number(offset), 1);
 
                 cachedCount = Math.max(cachedCount, 1);
                 cachedCountTime = Date.now();
@@ -161,10 +218,7 @@ async function removeOnlineSocket(userId, _socketId) {
     const mapKey = getKey(MAP_KEY);
 
     try {
-        const result = await redis.eval(REMOVE_ONLINE_SCRIPT, {
-            keys: [countsKey, bitmapKey, mapKey],
-            arguments: [userId],
-        });
+        const result = await runEval(redis, REMOVE_ONLINE_SCRIPT, [countsKey, bitmapKey, mapKey], [userId]);
         const newCount = Number(result);
 
 
@@ -179,12 +233,12 @@ async function removeOnlineSocket(userId, _socketId) {
     } catch (err) {
 
         try {
-            const newCount = await redis.hIncrBy(countsKey, userId, -1);
+            const newCount = await hIncrBy(redis, countsKey, userId, -1);
             if (newCount <= 0) {
-                await redis.hSet(countsKey, userId, "0");
-                const offset = await redis.hGet(mapKey, userId);
+                await hSet(redis, countsKey, userId, "0");
+                const offset = await hGet(redis, mapKey, userId);
                 if (offset != null) {
-                    await redis.setBit(bitmapKey, Number(offset), 0);
+                    await doSetBit(redis, bitmapKey, Number(offset), 0);
                 }
 
                 cachedCount = Math.max(0, cachedCount - 1);
@@ -219,7 +273,7 @@ async function getOnlineUserIds() {
         const redis = await getRedis();
         const countsKey = getKey(COUNTS_KEY);
 
-        const counts = await redis.hGetAll(countsKey) || {};
+        const counts = await hGetAll(redis, countsKey);
         const online = [];
 
         for (const [userId, countStr] of Object.entries(counts)) {
@@ -250,14 +304,14 @@ async function getOnlineUsersCount() {
         const bitmapKey = getKey(BITMAP_KEY);
 
         try {
-            const count = await redis.bitCount(bitmapKey);
+            const count = await doBitCount(redis, bitmapKey);
             cachedCount = Number(count) || 0;
             cachedCountTime = now;
             return cachedCount;
         } catch (err) {
             // Fallback
             const countsKey = getKey(COUNTS_KEY);
-            const counts = await redis.hGetAll(countsKey) || {};
+            const counts = await hGetAll(redis, countsKey);
             let count = 0;
             for (const value of Object.values(counts)) {
                 if (Number(value) > 0) count += 1;
@@ -280,18 +334,18 @@ async function isUserOnline(userId) {
         const mapKey = getKey(MAP_KEY);
         const bitmapKey = getKey(BITMAP_KEY);
 
-        const offset = await redis.hGet(mapKey, userId);
+        const offset = await hGet(redis, mapKey, userId);
         if (offset == null) {
             return false;
         }
 
         try {
-            const bit = await redis.getBit(bitmapKey, Number(offset));
+            const bit = await doGetBit(redis, bitmapKey, Number(offset));
             return bit === 1;
         } catch (err) {
 
             const countsKey = getKey(COUNTS_KEY);
-            const count = await redis.hGet(countsKey, userId);
+            const count = await hGet(redis, countsKey, userId);
             return Number(count || 0) > 0;
         }
     } catch (err) {
@@ -310,7 +364,7 @@ async function getUserBitOffset(userId) {
         const redis = await getRedis();
         const mapKey = getKey(MAP_KEY);
 
-        const offset = await redis.hGet(mapKey, userId);
+        const offset = await hGet(redis, mapKey, userId);
         return offset != null ? Number(offset) : null;
     } catch (err) {
         return null;
@@ -322,6 +376,12 @@ async function getUserBitOffset(userId) {
  * Useful for monitoring Redis memory usage.
  */
 async function getOnlineMemoryStats() {
+    // MEMORY USAGE is an admin command; limited or unavailable on Upstash REST / some managed Redis.
+    // Return nulls for Upstash (or on any failure) to avoid breaking health checks.
+    if (isUpstash()) {
+        return { bitmap: null, counts: null, map: null, total: null };
+    }
+
     try {
         const redis = await getRedis();
         const bitmapKey = getKey(BITMAP_KEY);

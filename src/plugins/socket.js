@@ -24,44 +24,49 @@ async function registerSocketServer(httpServer, app) {
         allowEIO3: false,
     });
 
-    try {
-        const adapterClients = await createAdapterPubSubClients(app.config);
+    const canUseAdapter = !!app.config.REDIS_URL; // adapter needs Redis protocol (pub/sub). Upstash REST alone is insufficient.
+    if (canUseAdapter) {
+        try {
+            const adapterClients = await createAdapterPubSubClients(app.config);
 
-        if (adapterClients) {
-            const { pubClient, subClient } = adapterClients;
-            const prefix = app.config.REDIS_KEY_PREFIX || "socket";
-            const key = `${prefix}:socket.io`;
+            if (adapterClients) {
+                const { pubClient, subClient } = adapterClients;
+                const prefix = app.config.REDIS_KEY_PREFIX || "socket";
+                const key = `${prefix}:socket.io`;
 
-            io.adapter(createAdapter(pubClient, subClient, { key }));
+                io.adapter(createAdapter(pubClient, subClient, { key }));
 
-            io._redisAdapterClients = { pubClient, subClient };
+                io._redisAdapterClients = { pubClient, subClient };
 
-            try {
-                const eventsSub = subClient.duplicate();
-                await eventsSub.connect();
+                try {
+                    const eventsSub = subClient.duplicate();
+                    await eventsSub.connect();
 
-                await eventsSub.subscribe("socket:events", (rawMessage) => {
-                    try {
-                        const payload = JSON.parse(rawMessage);
+                    await eventsSub.subscribe("socket:events", (rawMessage) => {
+                        try {
+                            const payload = JSON.parse(rawMessage);
 
-                        if (payload.targetId && payload.event) {
-                            io.to(String(payload.targetId)).emit(payload.event, payload.data || {});
-                        } else {
-                            app.log.warn({ payload }, "socket:events skipped - missing targetId or event");
+                            if (payload.targetId && payload.event) {
+                                io.to(String(payload.targetId)).emit(payload.event, payload.data || {});
+                            } else {
+                                app.log.warn({ payload }, "socket:events skipped - missing targetId or event");
+                            }
+                        } catch (parseErr) {
+                            app.log.error({ err: parseErr.message }, "socket:events failed to parse message");
                         }
-                    } catch (parseErr) {
-                        app.log.error({ err: parseErr.message }, "socket:events failed to parse message");
-                    }
-                });
+                    });
 
-                io._socketEventsSub = eventsSub;
+                    io._socketEventsSub = eventsSub;
 
-            } catch (err) {
-                app.log.error({ err }, "Failed to subscribe to 'socket:events' channel");
+                } catch (err) {
+                    app.log.error({ err }, "Failed to subscribe to 'socket:events' channel");
+                }
             }
+        } catch (err) {
+            app.log.error({ err }, "Failed to initialize Socket.IO Redis adapter - continuing without it");
         }
-    } catch (err) {
-        app.log.error({ err }, "Failed to initialize Socket.IO Redis adapter - continuing without it");
+    } else {
+        app.log.info("Socket.IO Redis adapter disabled (no REDIS_URL provided - using Upstash REST or single-instance mode)");
     }
 
     io.use(

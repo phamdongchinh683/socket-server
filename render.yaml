@@ -15,5 +15,11 @@ services:
         sync: false
       - key: API_URL
         sync: false
+      # Redis: use Upstash REST (recommended) or traditional REDIS_URL
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
       - key: REDIS_URL
         sync: false
+      # Optional: REDIS_URL (rediss://) also enables Socket.IO scaling adapter

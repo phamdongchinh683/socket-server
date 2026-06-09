@@ -64,6 +64,11 @@ function loadConfig() {
 
     const host = process.env.HOST || "0.0.0.0";
     const redisUrl = process.env.REDIS_URL || process.env.SOCKET_REDIS_URL;
+
+    // Upstash Redis REST (preferred for serverless / no persistent TCP)
+    const upstashRestUrl = process.env.UPSTASH_REDIS_REST_URL || process.env.UPSTASH_REDIS_URL;
+    const upstashRestToken = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.UPSTASH_REDIS_TOKEN;
+
     // Always respect PORT injected by Render/Heroku/etc. Only fallback to 4444 for local dev.
     const port = Number(process.env.PORT);
 
@@ -82,6 +87,10 @@ function loadConfig() {
 
         REDIS_KEY_PREFIX: process.env.REDIS_KEY_PREFIX,
         REDIS_URL: redisUrl,
+
+        // Upstash REST credentials
+        UPSTASH_REDIS_REST_URL: upstashRestUrl,
+        UPSTASH_REDIS_REST_TOKEN: upstashRestToken,
 
         ONLINE_CACHE_TTL_MS: Number(process.env.ONLINE_CACHE_TTL_MS) || 30000,
     };

@@ -9,8 +9,12 @@ async function start() {
         const { httpServer, config, log } = runtime;
 
         try {
-            await connectRedis(config);
-            log.info("Redis Cloud connected (online user tracking ready)");
+            const r = await connectRedis(config);
+            if (r && r.type === "upstash") {
+                log.info("Upstash Redis connected (online user tracking ready)");
+            } else {
+                log.info("Redis connected (online user tracking ready)");
+            }
         } catch (redisErr) {
             log.error({ err: redisErr }, "Failed to connect to Redis - online tracking will be degraded");
         }
