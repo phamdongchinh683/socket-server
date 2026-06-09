@@ -2,7 +2,7 @@ const { Server } = require("socket.io");
 const { createAdapter } = require("@socket.io/redis-adapter");
 const { buildSocketAuthMiddleware } = require("../socket/auth");
 const { registerSocketHandlers } = require("../socket/handlers");
-const { createAdapterPubSubClients, getRedisMode } = require("../redis/client");
+const { createAdapterPubSubClients } = require("../redis/client");
 
 function parseSocketTransports(value) {
     const transports = String(value || "websocket")
@@ -24,49 +24,46 @@ async function registerSocketServer(httpServer, app) {
         allowEIO3: false,
     });
 
-    const mode = getRedisMode(app.config);
-    if (mode === "redis") {
-        try {
-            const adapterClients = await createAdapterPubSubClients(app.config);
+    try {
+        const adapterClients = await createAdapterPubSubClients(app.config);
 
-            if (adapterClients) {
-                const { pubClient, subClient } = adapterClients;
-                const prefix = app.config.REDIS_KEY_PREFIX || "socket";
-                const key = `${prefix}:socket.io`;
+        if (adapterClients) {
+            const { pubClient, subClient } = adapterClients;
+            const prefix = app.config.REDIS_KEY_PREFIX || "socket";
+            const key = `${prefix}:socket.io`;
 
-                io.adapter(createAdapter(pubClient, subClient, { key }));
+            io.adapter(createAdapter(pubClient, subClient, { key }));
 
-                io._redisAdapterClients = { pubClient, subClient };
+            io._redisAdapterClients = { pubClient, subClient };
 
-                try {
-                    const eventsSub = subClient.duplicate();
-                    await eventsSub.connect();
+            try {
+                const eventsSub = subClient.duplicate();
+                await eventsSub.connect();
 
-                    await eventsSub.subscribe("socket:events", (rawMessage) => {
-                        try {
-                            const payload = JSON.parse(rawMessage);
+                await eventsSub.subscribe("socket:events", (rawMessage) => {
+                    try {
+                        const payload = JSON.parse(rawMessage);
 
-                            if (payload.targetId && payload.event) {
-                                io.to(String(payload.targetId)).emit(payload.event, payload.data || {});
-                            } else {
-                                app.log.warn({ payload }, "socket:events skipped - missing targetId or event");
-                            }
-                        } catch (parseErr) {
-                            app.log.error({ err: parseErr.message }, "socket:events failed to parse message");
+                        if (payload.targetId && payload.event) {
+                            io.to(String(payload.targetId)).emit(payload.event, payload.data || {});
+                        } else {
+                            app.log.warn({ payload }, "socket:events skipped - missing targetId or event");
                         }
-                    });
+                    } catch (parseErr) {
+                        app.log.error({ err: parseErr.message }, "socket:events failed to parse message");
+                    }
+                });
 
-                    io._socketEventsSub = eventsSub;
+                io._socketEventsSub = eventsSub;
 
-                } catch (err) {
-                    app.log.error({ err }, "Failed to subscribe to 'socket:events' channel");
-                }
+            } catch (err) {
+                app.log.error({ err }, "Failed to subscribe to 'socket:events' channel");
             }
-        } catch (err) {
-            app.log.error({ err }, "Failed to initialize Socket.IO Redis adapter - continuing without it");
+        } else {
+            app.log.warn("Socket.IO Redis adapter disabled (Upstash detected) - run only 1 instance");
         }
-    } else {
-        app.log.info("Socket.IO Redis adapter disabled (đang dùng Upstash REST mode - chỉ hỗ trợ single instance)");
+    } catch (err) {
+        app.log.error({ err }, "Failed to initialize Socket.IO Redis adapter - continuing without it");
     }
 
     io.use(

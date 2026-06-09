@@ -1,7 +1,7 @@
-const { getNormalizedRedis, getRedisMode } = require("../redis/client");
+const { connectRedis } = require("../redis/client");
 
 let redisConfig = null;
-let normalizedRedis = null;
+let redisClient = null;
 
 const BITMAP_KEY = "online:bitmap";
 const COUNTS_KEY = "online:counts";
@@ -30,18 +30,14 @@ function getKey(name) {
     return `${redisConfig.REDIS_KEY_PREFIX}:${name}`;
 }
 
-function getMode() {
-    return getRedisMode(redisConfig);
-}
-
 async function getRedis() {
     if (!redisConfig) {
         throw new Error("Redis config not initialized. Call initOnlineStore(config) first.");
     }
-    if (!normalizedRedis) {
-        normalizedRedis = await getNormalizedRedis(redisConfig);
+    if (!redisClient) {
+        redisClient = await connectRedis(redisConfig);
     }
-    return normalizedRedis;
+    return redisClient;
 }
 
 function initOnlineStore(config) {
@@ -103,7 +99,10 @@ async function addOnlineSocket(userId, _socketId) {
     const counterKey = getKey(COUNTER_KEY);
 
     try {
-        const result = await redis.eval(ADD_ONLINE_SCRIPT, [countsKey, bitmapKey, mapKey, counterKey], [userId]);
+        const result = await redis.eval(ADD_ONLINE_SCRIPT, {
+            keys: [countsKey, bitmapKey, mapKey, counterKey],
+            arguments: [userId],
+        });
         const newCount = Number(result);
 
         if (newCount === 1) {
@@ -120,16 +119,16 @@ async function addOnlineSocket(userId, _socketId) {
     } catch (err) {
 
         try {
-            const newCount = await redis.hincrby(countsKey, userId, 1);
+            const newCount = await redis.hIncrBy(countsKey, userId, 1);
             if (newCount === 1) {
                 const mapKey2 = getKey(MAP_KEY);
-                let offset = await redis.hget(mapKey2, userId);
+                let offset = await redis.hGet(mapKey2, userId);
                 if (offset == null) {
                     const counterKey2 = getKey(COUNTER_KEY);
                     offset = await redis.incr(counterKey2);
-                    await redis.hset(mapKey2, userId, String(offset));
+                    await redis.hSet(mapKey2, userId, String(offset));
                 }
-                await redis.setbit(getKey(BITMAP_KEY), Number(offset), 1);
+                await redis.setBit(getKey(BITMAP_KEY), Number(offset), 1);
 
                 cachedCount = Math.max(cachedCount, 1);
                 cachedCountTime = Date.now();
@@ -162,7 +161,10 @@ async function removeOnlineSocket(userId, _socketId) {
     const mapKey = getKey(MAP_KEY);
 
     try {
-        const result = await redis.eval(REMOVE_ONLINE_SCRIPT, [countsKey, bitmapKey, mapKey], [userId]);
+        const result = await redis.eval(REMOVE_ONLINE_SCRIPT, {
+            keys: [countsKey, bitmapKey, mapKey],
+            arguments: [userId],
+        });
         const newCount = Number(result);
 
 
@@ -177,12 +179,12 @@ async function removeOnlineSocket(userId, _socketId) {
     } catch (err) {
 
         try {
-            const newCount = await redis.hincrby(countsKey, userId, -1);
+            const newCount = await redis.hIncrBy(countsKey, userId, -1);
             if (newCount <= 0) {
-                await redis.hset(countsKey, userId, "0");
-                const offset = await redis.hget(mapKey, userId);
+                await redis.hSet(countsKey, userId, "0");
+                const offset = await redis.hGet(mapKey, userId);
                 if (offset != null) {
-                    await redis.setbit(bitmapKey, Number(offset), 0);
+                    await redis.setBit(bitmapKey, Number(offset), 0);
                 }
 
                 cachedCount = Math.max(0, cachedCount - 1);
@@ -217,7 +219,7 @@ async function getOnlineUserIds() {
         const redis = await getRedis();
         const countsKey = getKey(COUNTS_KEY);
 
-        const counts = await redis.hgetall(countsKey);
+        const counts = await redis.hGetAll(countsKey) || {};
         const online = [];
 
         for (const [userId, countStr] of Object.entries(counts)) {
@@ -248,14 +250,14 @@ async function getOnlineUsersCount() {
         const bitmapKey = getKey(BITMAP_KEY);
 
         try {
-            const count = await redis.bitcount(bitmapKey);
+            const count = await redis.bitCount(bitmapKey);
             cachedCount = Number(count) || 0;
             cachedCountTime = now;
             return cachedCount;
         } catch (err) {
             // Fallback
             const countsKey = getKey(COUNTS_KEY);
-            const counts = await redis.hgetall(countsKey);
+            const counts = await redis.hGetAll(countsKey) || {};
             let count = 0;
             for (const value of Object.values(counts)) {
                 if (Number(value) > 0) count += 1;
@@ -278,18 +280,18 @@ async function isUserOnline(userId) {
         const mapKey = getKey(MAP_KEY);
         const bitmapKey = getKey(BITMAP_KEY);
 
-        const offset = await redis.hget(mapKey, userId);
+        const offset = await redis.hGet(mapKey, userId);
         if (offset == null) {
             return false;
         }
 
         try {
-            const bit = await redis.getbit(bitmapKey, Number(offset));
+            const bit = await redis.getBit(bitmapKey, Number(offset));
             return bit === 1;
         } catch (err) {
 
             const countsKey = getKey(COUNTS_KEY);
-            const count = await redis.hget(countsKey, userId);
+            const count = await redis.hGet(countsKey, userId);
             return Number(count || 0) > 0;
         }
     } catch (err) {
@@ -308,7 +310,7 @@ async function getUserBitOffset(userId) {
         const redis = await getRedis();
         const mapKey = getKey(MAP_KEY);
 
-        const offset = await redis.hget(mapKey, userId);
+        const offset = await redis.hGet(mapKey, userId);
         return offset != null ? Number(offset) : null;
     } catch (err) {
         return null;
@@ -317,15 +319,9 @@ async function getUserBitOffset(userId) {
 
 /**
  * Get approximate memory usage of the online tracking keys in Redis.
- * Useful for monitoring Redis memory usage.
+ * Useful for monitoring on Upstash or self-hosted Redis.
  */
 async function getOnlineMemoryStats() {
-    // MEMORY USAGE chỉ có ý nghĩa với TCP/redis mode.
-    // Upstash REST và một số managed Redis hạn chế lệnh admin này.
-    if (getMode() === "upstash") {
-        return { bitmap: null, counts: null, map: null, total: null };
-    }
-
     try {
         const redis = await getRedis();
         const bitmapKey = getKey(BITMAP_KEY);
@@ -341,9 +337,9 @@ async function getOnlineMemoryStats() {
 
         try {
             const [bitmapUsage, countsUsage, mapUsage] = await Promise.all([
-                redis.eval('return redis.call("MEMORY", "USAGE", KEYS[1])', [bitmapKey], []).catch(() => null),
-                redis.eval('return redis.call("MEMORY", "USAGE", KEYS[1])', [countsKey], []).catch(() => null),
-                redis.eval('return redis.call("MEMORY", "USAGE", KEYS[1])', [mapKey], []).catch(() => null),
+                redis.eval('return redis.call("MEMORY", "USAGE", KEYS[1])', { keys: [bitmapKey] }).catch(() => null),
+                redis.eval('return redis.call("MEMORY", "USAGE", KEYS[1])', { keys: [countsKey] }).catch(() => null),
+                redis.eval('return redis.call("MEMORY", "USAGE", KEYS[1])', { keys: [mapKey] }).catch(() => null),
             ]);
 
             result.bitmap = bitmapUsage ? Number(bitmapUsage) : null;

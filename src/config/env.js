@@ -63,25 +63,7 @@ function loadConfig() {
     loadDotEnv();
 
     const host = process.env.HOST || "0.0.0.0";
-    const redisUrl = process.env.REDIS_URL || process.env.SOCKET_REDIS_URL;
-
-    const upstashRestUrl = process.env.UPSTASH_REDIS_REST_URL || process.env.UPSTASH_REDIS_URL;
-    const upstashRestToken = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.UPSTASH_REDIS_TOKEN;
-
-    const hasTcp = !!redisUrl;
-    const hasUpstash = !!(upstashRestUrl && upstashRestToken);
-
-    if (hasTcp && hasUpstash) {
-        throw new Error("Chỉ được chọn 1 trong 2: cung cấp UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN (REST) HOẶC REDIS_URL (TCP). Không được set cả hai cùng lúc.");
-    }
-
-    let redisMode = null;
-    if (hasUpstash) {
-        redisMode = "upstash";
-    } else if (hasTcp) {
-        redisMode = "redis";
-    }
-
+    // Always respect PORT injected by Render/Heroku/etc. Only fallback to 4444 for local dev.
     const port = Number(process.env.PORT);
 
     return {
@@ -98,12 +80,10 @@ function loadConfig() {
         SOCKET_SERVE_CLIENT: parseBoolean(process.env.SOCKET_SERVE_CLIENT, false),
 
         REDIS_KEY_PREFIX: process.env.REDIS_KEY_PREFIX,
+        SOCKET_REDIS_URL: process.env.SOCKET_REDIS_URL,
 
-        // Exactly one of the two will be active
-        REDIS_MODE: redisMode, // 'upstash' | 'redis' | null
-        REDIS_URL: redisUrl,
-        UPSTASH_REDIS_REST_URL: upstashRestUrl,
-        UPSTASH_REDIS_REST_TOKEN: upstashRestToken,
+        UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL,
+        UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN,
 
         ONLINE_CACHE_TTL_MS: Number(process.env.ONLINE_CACHE_TTL_MS) || 30000,
     };

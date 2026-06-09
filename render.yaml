@@ -15,12 +15,6 @@ services:
         sync: false
       - key: API_URL
         sync: false
-      # CHỈ chọn 1 trong 2:
-      # - Upstash REST (single instance):
-      - key: UPSTASH_REDIS_REST_URL
-        sync: false
-      - key: UPSTASH_REDIS_REST_TOKEN
-        sync: false
-      # - Hoặc TCP (hỗ trợ scale nhiều instance qua adapter):
-      - key: REDIS_URL
-        sync: false
+      # Redis riêng cho Socket.IO adapter (Pub/Sub). Dùng khi muốn giữ Upstash cho online presence.
+      # - key: SOCKET_REDIS_URL
+      #   sync: false

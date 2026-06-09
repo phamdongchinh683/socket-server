@@ -1,31 +1,122 @@
 const { createClient } = require("redis");
+const { Redis: UpstashRedis } = require("@upstash/redis");
+const { createAdapter } = require("@socket.io/redis-adapter");
 
-let nodeRedisClient = null;
-let connectPromise = null;
-let upstashRawClient = null;
+let rawClient = null;
+let normalizedClient = null;
+let isConnecting = false;
+let isUpstash = false;
 
-/** Determine active mode. Throws if neither configured. */
-function getRedisMode(config) {
-    if (config && config.REDIS_MODE) {
-        return config.REDIS_MODE; // 'upstash' | 'redis' (enforced in env.js)
-    }
-    const hasUpstash = !!(config && config.UPSTASH_REDIS_REST_URL && config.UPSTASH_REDIS_REST_TOKEN);
-    const hasTcp = !!config?.REDIS_URL;
-    if (hasUpstash) return "upstash";
-    if (hasTcp) return "redis";
-    throw new Error("Missing Redis config: set either UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN or REDIS_URL");
-}
-
-function isUpstashMode(config) {
-    return getRedisMode(config) === "upstash";
-}
-
-function buildRedisOptions(config) {
-    if (!config.REDIS_URL) {
-        throw new Error("REDIS_URL is required for TCP/redis mode");
-    }
+function wrapNodeRedis(client) {
     return {
-        url: config.REDIS_URL,
+        async hGet(key, field) {
+            return client.hGet(key, field);
+        },
+        async hSet(key, field, value) {
+            if (typeof field === "object" && field !== null) {
+                return client.hSet(key, field);
+            }
+            return client.hSet(key, field, value);
+        },
+        async hIncrBy(key, field, increment) {
+            return client.hIncrBy(key, field, increment);
+        },
+        async hGetAll(key) {
+            const res = await client.hGetAll(key);
+            return res || {};
+        },
+        async incr(key) {
+            return client.incr(key);
+        },
+        async setBit(key, offset, value) {
+            return client.setBit(key, offset, value);
+        },
+        async getBit(key, offset) {
+            return client.getBit(key, offset);
+        },
+        async bitCount(key) {
+            return client.bitCount(key);
+        },
+        async eval(script, options) {
+            return client.eval(script, options);
+        },
+        async info(section) {
+            return client.info(section);
+        },
+        async quit() {
+            if (client.isOpen) {
+                await client.quit();
+            }
+        },
+        get isOpen() {
+            return client.isOpen;
+        },
+    };
+}
+
+function wrapUpstash(redis) {
+    return {
+        async hGet(key, field) {
+            return redis.hget(key, field);
+        },
+        async hSet(key, field, value) {
+            if (typeof field === "object" && field !== null) {
+                return redis.hset(key, field);
+            }
+            return redis.hset(key, field, value);
+        },
+        async hIncrBy(key, field, increment) {
+            return redis.hincrby(key, field, increment);
+        },
+        async hGetAll(key) {
+            const res = await redis.hgetall(key);
+            return res || {};
+        },
+        async incr(key) {
+            return redis.incr(key);
+        },
+        async setBit(key, offset, value) {
+            return redis.setbit(key, offset, value);
+        },
+        async getBit(key, offset) {
+            return redis.getbit(key, offset);
+        },
+        async bitCount(key) {
+            return redis.bitcount(key);
+        },
+        async eval(script, options) {
+            const { keys = [], arguments: args = [] } = options || {};
+            return redis.eval(script, keys, args);
+        },
+        async info(section) {
+            try {
+                return redis.info(section);
+            } catch {
+                return null;
+            }
+        },
+        async quit() {
+            return;
+        },
+        get isOpen() {
+            return true;
+        },
+    };
+}
+
+function isUpstashConfig(config) {
+    return !!(config.UPSTASH_REDIS_REST_URL && config.UPSTASH_REDIS_REST_TOKEN);
+}
+
+function buildUpstashClient(config) {
+    return new UpstashRedis({
+        url: config.UPSTASH_REDIS_REST_URL,
+        token: config.UPSTASH_REDIS_REST_TOKEN,
+    });
+}
+
+function buildNodeRedisOptions(config) {
+    const options = {
         socket: {
             reconnectStrategy: (retries) => {
                 if (retries > 10) {
@@ -39,177 +130,134 @@ function buildRedisOptions(config) {
         },
         commandsQueueMaxLength: 1000,
     };
+
+    return options;
 }
 
-function attachErrorLogger(client, label) {
+function getRedisClient(config) {
+    if (rawClient) {
+        return rawClient;
+    }
+
+    if (isUpstashConfig(config)) {
+        isUpstash = true;
+        rawClient = buildUpstashClient(config);
+        return rawClient;
+    }
+
+    isUpstash = false;
+    const options = buildNodeRedisOptions(config);
+    rawClient = createClient(options);
+
     let errorCount = 0;
-    client.on("error", (err) => {
+    rawClient.on("error", (err) => {
         errorCount += 1;
         if (errorCount <= 3) {
-            console.error(`[${label}] error:`, err.message || err);
+            console.error("[redis] Client error:", err.message || err);
         }
     });
+
+    rawClient.on("connect", () => {});
+
+    return rawClient;
 }
 
-// --- TCP / node-redis path ---
-function getNodeRedisClient(config) {
-    if (!nodeRedisClient) {
-        nodeRedisClient = createClient(buildRedisOptions(config));
-        attachErrorLogger(nodeRedisClient, "redis");
-    }
-    return nodeRedisClient;
-}
-
-function normalizeNodeRedis(raw) {
-    return {
-        // Always use (script, keysArray, argsArray) from caller
-        async eval(script, keys, args) {
-            return raw.eval(script, { keys, arguments: args });
-        },
-        hincrby(key, field, increment) {
-            return raw.hIncrBy(key, field, increment);
-        },
-        hget(key, field) {
-            return raw.hGet(key, field);
-        },
-        hset(key, field, value) {
-            return raw.hSet(key, field, value);
-        },
-        hgetall(key) {
-            return raw.hGetAll(key);
-        },
-        incr(key) {
-            return raw.incr(key);
-        },
-        setbit(key, offset, value) {
-            return raw.setBit(key, offset, value);
-        },
-        getbit(key, offset) {
-            return raw.getBit(key, offset);
-        },
-        bitcount(key) {
-            return raw.bitCount(key);
-        },
-    };
-}
-
-// --- Upstash REST path ---
-function getUpstashRawClient(config) {
-    if (!upstashRawClient) {
-        const { Redis } = require("@upstash/redis");
-        upstashRawClient = new Redis({
-            url: config.UPSTASH_REDIS_REST_URL,
-            token: config.UPSTASH_REDIS_REST_TOKEN,
-        });
-    }
-    return upstashRawClient;
-}
-
-function normalizeUpstash(raw) {
-    return {
-        async eval(script, keys, args) {
-            return raw.eval(script, keys, args);
-        },
-        hincrby(key, field, increment) {
-            return raw.hincrby(key, field, increment);
-        },
-        hget(key, field) {
-            return raw.hget(key, field);
-        },
-        hset(key, field, value) {
-            return raw.hset(key, { [field]: value });
-        },
-        async hgetall(key) {
-            const res = await raw.hgetall(key);
-            return res || {};
-        },
-        incr(key) {
-            return raw.incr(key);
-        },
-        setbit(key, offset, value) {
-            return raw.setbit(key, offset, value);
-        },
-        getbit(key, offset) {
-            return raw.getbit(key, offset);
-        },
-        bitcount(key) {
-            return raw.bitcount(key);
-        },
-    };
-}
-
-// --- Public API ---
-
-/**
- * Returns a normalized redis client (same method names regardless of backend).
- * For 'redis' (TCP) mode: ensures the client is connected.
- * For 'upstash' mode: returns immediately (HTTP).
- */
-async function getNormalizedRedis(config) {
-    const mode = getRedisMode(config);
-
-    if (mode === "upstash") {
-        const raw = getUpstashRawClient(config);
-        return normalizeUpstash(raw);
-    }
-
-    // TCP mode
-    const raw = getNodeRedisClient(config);
-    if (!raw.isOpen) {
-        if (!connectPromise) {
-            connectPromise = raw.connect().finally(() => { connectPromise = null; });
-        }
-        await connectPromise;
-    }
-    return normalizeNodeRedis(raw);
-}
-
-/** Backwards-compatible connect (used at startup for logging + warming) */
 async function connectRedis(config) {
-    const mode = getRedisMode(config);
-    if (mode === "upstash") {
-        getUpstashRawClient(config);
-        return { mode: "upstash" };
+    if (normalizedClient) {
+        return normalizedClient;
     }
-    const client = getNodeRedisClient(config);
-    if (client.isOpen) return client;
-    if (!connectPromise) {
-        connectPromise = client.connect().finally(() => { connectPromise = null; });
+
+    const wantsUpstash = isUpstashConfig(config);
+
+    if (wantsUpstash) {
+        isUpstash = true;
+        const upstash = buildUpstashClient(config);
+        rawClient = upstash;
+        normalizedClient = wrapUpstash(upstash);
+
+        return normalizedClient;
     }
-    await connectPromise;
-    return client;
+
+    isUpstash = false;
+    const raw = getRedisClient(config);
+
+    if (!raw.isOpen && !isConnecting) {
+        isConnecting = true;
+        try {
+            await raw.connect();
+        } finally {
+            isConnecting = false;
+        }
+    }
+
+    normalizedClient = wrapNodeRedis(raw);
+    return normalizedClient;
 }
 
 async function closeRedis() {
-    if (nodeRedisClient && nodeRedisClient.isOpen) {
-        await nodeRedisClient.quit().catch(() => {});
+    if (normalizedClient) {
+        try {
+            await normalizedClient.quit();
+        } catch (_) {}
+        normalizedClient = null;
+        rawClient = null;
+        return;
     }
-    nodeRedisClient = null;
-    connectPromise = null;
-    upstashRawClient = null; // stateless
+
+    if (rawClient) {
+        if (isUpstash) {
+            rawClient = null;
+        } else if (rawClient.isOpen) {
+            await rawClient.quit().catch(() => {});
+            rawClient = null;
+        }
+    }
 }
 
-/** Only available in 'redis' (TCP) mode. Throws otherwise. */
 async function createAdapterPubSubClients(config) {
-    const mode = getRedisMode(config);
-    if (mode !== "redis") {
-        throw new Error("Socket.IO Redis adapter chỉ hỗ trợ khi dùng REDIS_URL (TCP mode). Khi dùng Upstash REST (UPSTASH_REDIS_REST_*) thì chỉ chạy được single instance (không có adapter).");
+    const adapterUrl = config.SOCKET_REDIS_URL
+
+    if (adapterUrl) {
+        const pubClient = createClient({ url: adapterUrl });
+        const subClient = pubClient.duplicate();
+
+        pubClient.on("error", (err) => {
+            console.error("[redis:adapter:pub] error:", err.message || err);
+        });
+        subClient.on("error", (err) => {
+            console.error("[redis:adapter:sub] error:", err.message || err);
+        });
+
+        await pubClient.connect();
+        await subClient.connect();
+
+        return { pubClient, subClient };
     }
-    const pubClient = createClient(buildRedisOptions(config));
+
+    if (isUpstashConfig(config)) {
+        return null;
+    }
+
+    const options = buildNodeRedisOptions(config);
+    const pubClient = createClient(options);
     const subClient = pubClient.duplicate();
 
-    attachErrorLogger(pubClient, "redis:adapter:pub");
-    attachErrorLogger(subClient, "redis:adapter:sub");
+    pubClient.on("error", (err) => {
+        console.error("[redis:adapter:pub] error:", err.message || err);
+    });
+    subClient.on("error", (err) => {
+        console.error("[redis:adapter:sub] error:", err.message || err);
+    });
 
-    await Promise.all([pubClient.connect(), subClient.connect()]);
+    await pubClient.connect();
+    await subClient.connect();
+
     return { pubClient, subClient };
 }
 
 module.exports = {
-    getNormalizedRedis,
+    getRedisClient,
     connectRedis,
     closeRedis,
     createAdapterPubSubClients,
-    getRedisMode,
-    isUpstashMode,
 };
