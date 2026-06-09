@@ -2,7 +2,7 @@ const { Server } = require("socket.io");
 const { createAdapter } = require("@socket.io/redis-adapter");
 const { buildSocketAuthMiddleware } = require("../socket/auth");
 const { registerSocketHandlers } = require("../socket/handlers");
-const { createAdapterPubSubClients } = require("../redis/client");
+const { createAdapterPubSubClients, getRedisMode } = require("../redis/client");
 
 function parseSocketTransports(value) {
     const transports = String(value || "websocket")
@@ -24,8 +24,8 @@ async function registerSocketServer(httpServer, app) {
         allowEIO3: false,
     });
 
-    const canUseAdapter = !!app.config.REDIS_URL; // adapter needs Redis protocol (pub/sub). Upstash REST alone is insufficient.
-    if (canUseAdapter) {
+    const mode = getRedisMode(app.config);
+    if (mode === "redis") {
         try {
             const adapterClients = await createAdapterPubSubClients(app.config);
 
@@ -66,7 +66,7 @@ async function registerSocketServer(httpServer, app) {
             app.log.error({ err }, "Failed to initialize Socket.IO Redis adapter - continuing without it");
         }
     } else {
-        app.log.info("Socket.IO Redis adapter disabled (no REDIS_URL provided - using Upstash REST or single-instance mode)");
+        app.log.info("Socket.IO Redis adapter disabled (đang dùng Upstash REST mode - chỉ hỗ trợ single instance)");
     }
 
     io.use(

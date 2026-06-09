@@ -28,30 +28,29 @@ Set these in Render -> Environment:
 - `HOST` = `0.0.0.0`
 - `NODE_ENV` = `production`
 
-**Redis (required for online user tracking via bitmap + optional Socket.IO scaling):**
+**Redis – CHỈ sử dụng 1 trong 2 (không mix):**
 
-You can use either:
+### 1. Upstash Redis REST (khuyến nghị cho đa số trường hợp)
+- `UPSTASH_REDIS_REST_URL`
+- `UPSTASH_REDIS_REST_TOKEN`
 
-### Option A: Upstash Redis (recommended for most deployments)
-- `UPSTASH_REDIS_REST_URL` = Upstash REST URL (e.g. `https://xxx.upstash.io`)
-- `UPSTASH_REDIS_REST_TOKEN` = Upstash REST token
+Dùng cho online user tracking (bitmap, counters). Không cần kết nối TCP liên tục, phù hợp serverless / Render free tier.
 
-These are used for online user tracking (bitmap + counters). No persistent TCP connection required.
+**Lưu ý:** Socket.IO Redis adapter (hỗ trợ scale nhiều instance) **không hoạt động** ở chế độ REST. Server chỉ chạy được single instance.
 
-If you also want to scale the socket server across multiple instances (rooms, broadcast), additionally set:
-- `REDIS_URL` = Upstash **Redis** connection string (from Upstash dashboard → Redis → "Redis" connection, rediss://...) for the Socket.IO adapter pub/sub.
+### 2. TCP / Redis protocol (dùng `redis` package)
+- `REDIS_URL` = `rediss://...` hoặc `redis://...`
 
-### Option B: Self-hosted / Redis Cloud / direct rediss://
-- `REDIS_URL` = full connection string used for **both** online tracking and the Socket.IO adapter.
-  Example: `rediss://default:<password>@<host>:<port>`
+Dùng cho **cả** online tracking + Socket.IO adapter (hỗ trợ scale nhiều instance, pub/sub cho rooms).
 
-Other Redis settings:
-- `REDIS_KEY_PREFIX` = namespace prefix for keys (default: `socket`)
-- `ONLINE_CACHE_TTL_MS` = short in-memory cache time for online count & list (default: `30000` ms).
+Các biến khác:
+- `REDIS_KEY_PREFIX` (mặc định `socket`)
+- `ONLINE_CACHE_TTL_MS` (mặc định `30000`)
 
-`SOCKET_REDIS_URL` is accepted as a temporary backwards-compatible alias for `REDIS_URL`.
-
-`UPSTASH_REDIS_URL` / `UPSTASH_REDIS_TOKEN` are also accepted as aliases for the REST credentials.
+**Quy tắc quan trọng:**
+- Chỉ được set **một trong hai** bộ thông tin.
+- Nếu set cả UPSTASH_REDIS_REST_* lẫn REDIS_URL cùng lúc → server sẽ báo lỗi ngay khi khởi động.
+- `SOCKET_REDIS_URL` vẫn được chấp nhận như alias cũ cho `REDIS_URL`.
 
 ### Health endpoint
 
@@ -93,9 +92,8 @@ Render automatically provides `PORT`, and the server already supports it.
 
 For auth, send a valid JWT: `Authorization: Bearer <token>`, or `auth.token`, or query `token`. The token must include `sub` (or `userId` / `id`) for the account id.
 
-## Redis permissions (for REDIS_URL or Upstash Redis protocol)
+## Redis permissions
 
-When using a direct `REDIS_URL` (Redis protocol), the user/role must be allowed to run:
-`HINCRBY`, `HGET`, `HSET`, `HGETALL`, `INCR`, `SETBIT`, `GETBIT`, `BITCOUNT`, `EVAL`, `PUBLISH`, and `SUBSCRIBE`.
+- **TCP mode (REDIS_URL)**: cần quyền chạy `HINCRBY`, `HGET`, `HSET`, `HGETALL`, `INCR`, `SETBIT`, `GETBIT`, `BITCOUNT`, `EVAL`, `PUBLISH`, `SUBSCRIBE`.
 
-When using Upstash REST (`UPSTASH_REDIS_REST_*`), most commands above are supported via their REST API (EVAL, bitmap ops, hashes etc. work). The adapter (scaling) still needs the protocol URL.
+- **Upstash REST mode**: các lệnh trên được hỗ trợ qua REST API (trừ một số lệnh admin như MEMORY USAGE). Adapter (scale nhiều instance) không dùng được ở chế độ này.

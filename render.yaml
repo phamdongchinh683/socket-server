@@ -15,11 +15,12 @@ services:
         sync: false
       - key: API_URL
         sync: false
-      # Redis: use Upstash REST (recommended) or traditional REDIS_URL
+      # CHỈ chọn 1 trong 2:
+      # - Upstash REST (single instance):
       - key: UPSTASH_REDIS_REST_URL
         sync: false
       - key: UPSTASH_REDIS_REST_TOKEN
         sync: false
+      # - Hoặc TCP (hỗ trợ scale nhiều instance qua adapter):
       - key: REDIS_URL
         sync: false
-      # Optional: REDIS_URL (rediss://) also enables Socket.IO scaling adapter
